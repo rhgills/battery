@@ -4,7 +4,7 @@
 ## Update management
 ## variables are used by this binary as well at the update script
 ## ###############
-BATTERY_CLI_VERSION="v1.2.7"
+BATTERY_CLI_VERSION="v1.2.7-rhgills-development"
 
 # Path fixes for unexpected environments
 PATH=/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
@@ -109,10 +109,10 @@ Usage:
 visudoconfig="
 # Visudo settings for the battery utility installed from https://github.com/actuallymentor/battery
 # intended to be placed in $visudo_file on a mac
-Cmnd_Alias      BATTERYOFF = $binfolder/smc -k CH0B -w 02, $binfolder/smc -k CH0C -w 02, $binfolder/smc -k CH0B -r, $binfolder/smc -k CH0C -r
-Cmnd_Alias      BATTERYON = $binfolder/smc -k CH0B -w 00, $binfolder/smc -k CH0C -w 00
-Cmnd_Alias      DISCHARGEOFF = $binfolder/smc -k CH0I -w 00, $binfolder/smc -k CH0I -r
-Cmnd_Alias      DISCHARGEON = $binfolder/smc -k CH0I -w 01
+Cmnd_Alias      BATTERYOFF = $binfolder/smc -k CH0B -w 02, $binfolder/smc -k CH0C -w 02, $binfolder/smc -k CHTE -w 01000000, $binfolder/smc -k CH0B -r, $binfolder/smc -k CH0C -r, $binfolder/smc -k CHTE -r
+Cmnd_Alias      BATTERYON = $binfolder/smc -k CH0B -w 00, $binfolder/smc -k CH0C -w 00, $binfolder/smc -k CHTE -w 00000000
+Cmnd_Alias      DISCHARGEOFF = $binfolder/smc -k CH0I -w 00, $binfolder/smc -k CH0I -r, $binfolder/smc -k CH0J -w 00, $binfolder/smc -k CH0J -r, $binfolder/smc -k CH0K -w 00, $binfolder/smc -k CH0K -r, $binfolder/smc -d off
+Cmnd_Alias      DISCHARGEON = $binfolder/smc -k CH0I -w 01, $binfolder/smc -k CH0J -w 01, $binfolder/smc -k CH0K -w 01, $binfolder/smc -d on
 Cmnd_Alias      LEDCONTROL = $binfolder/smc -k ACLC -w 04, $binfolder/smc -k ACLC -w 03, $binfolder/smc -k ACLC -w 02, $binfolder/smc -k ACLC -w 01, $binfolder/smc -k ACLC -w 00, $binfolder/smc -k ACLC -r
 ALL ALL = NOPASSWD: BATTERYOFF
 ALL ALL = NOPASSWD: BATTERYON
@@ -126,6 +126,20 @@ battery_binary=$0
 action=$1
 setting=$2
 subsetting=$3
+
+# check the availability of SMC keys
+[[ $(smc -k BCLM -r) =~ "no data" ]] && has_BCLM=false || has_BCLM=true;
+[[ $(smc -k CH0B -r) =~ "no data" ]] && has_CH0B=false || has_CH0B=true;
+[[ $(smc -k CH0C -r) =~ "no data" ]] && has_CH0C=false || has_CH0C=true;
+[[ $(smc -k CH0I -r) =~ "no data" ]] && has_CH0I=false || has_CH0I=true;
+[[ $(smc -k CH0J -r) =~ "no data" ]] && has_CH0J=false || has_CH0J=true;
+[[ $(smc -k CH0K -r) =~ "no data" ]] && has_CH0K=false || has_CH0K=true;
+[[ $(smc -k ACEN -r) =~ "no data" ]] && has_ACEN=false || has_ACEN=true;
+[[ $(smc -k ACLC -r) =~ "no data" ]] && has_ACLC=false || has_ACLC=true;
+[[ $(smc -k CHWA -r) =~ "no data" ]] && has_CHWA=false || has_CHWA=true;
+[[ $(smc -k BFCL -r) =~ "no data" ]] && has_BFCL=false || has_BFCL=true;
+[[ $(smc -k ACFP -r) =~ "no data" ]] && has_ACFP=false || has_ACFP=true;
+[[ $(smc -k CHTE -r) =~ "no data" ]] && has_CHTE=false || has_CHTE=true;
 
 ## ###############
 ## Helpers
@@ -170,37 +184,57 @@ function change_magsafe_led_color() {
 
 	if [[ "$color" == "green" ]]; then
 		log "setting LED to green"
-		sudo smc -k ACLC -w 03
+		write_smc ACLC 03
 	elif [[ "$color" == "orange" ]]; then
 		log "setting LED to orange"
-		sudo smc -k ACLC -w 04
+		write_smc ACLC 04
 	else
 		# Default action: reset. Value 00 is a guess and needs confirmation
 		log "resetting LED"
-		sudo smc -k ACLC -w 00
+		write_smc ACLC 00
 	fi
 }
 
-# Re:discharging, we're using keys uncovered by @howie65: https://github.com/actuallymentor/battery/issues/20#issuecomment-1364540704
-# CH0I seems to be the "disable the adapter" key
 function enable_discharging() {
 	log "🔽🪫 Enabling battery discharging"
-	sudo smc -k CH0I -w 01
-	sudo smc -k ACLC -w 01
+
+	disable_charging
+
+	# Re:discharging, we're using keys uncovered by @howie65: https://github.com/actuallymentor/battery/issues/20#issuecomment-1364540704
+	# CH0I seems to be the "disable the adapter" key
+	if [[ $(get_cpu_type) == "apple" ]]; then
+		if $has_CH0I; then write_smc CH0I 01; fi
+		if $has_CH0J && ! $has_CH0I; then write_smc CH0J 01; fi
+		if $has_ACLC; then write_smc ACLC 01; fi
+	else
+		if $has_BCLM; then write_smc BCLM 0a; fi
+		if $has_ACEN; then write_smc ACEN 00; fi
+	fi
+
+	sleep 1
 }
 
 function disable_discharging() {
 	log "🔼🪫 Disabling battery discharging"
-	sudo smc -k CH0I -w 00
+
+	# Disable discharging
+	if [[ $(get_cpu_type) == "apple" ]]; then
+		if $has_CH0I; then write_smc CH0I 00; fi
+		if $has_CH0J && ! $has_CH0I; then write_smc CH0J 00; fi
+	else
+		if $has_ACEN; then write_smc ACEN 01; fi
+	fi
+
 	# Keep track of status
 	is_charging=$(get_smc_charging_status)
 
 	if ! valid_percentage "$setting"; then
 
 		log "Disabling discharging: No valid maintain percentage set, enabling charging"
+
 		# use direct commands since enable_charging also calls disable_discharging, and causes an eternal loop
-		sudo smc -k CH0B -w 00
-		sudo smc -k CH0C -w 00
+		_enable_charging_internal
+
 		change_magsafe_led_color "orange"
 
 	elif [[ "$battery_percentage" -ge "$setting" && "$is_charging" == "enabled" ]]; then
@@ -212,30 +246,58 @@ function disable_discharging() {
 	elif [[ "$battery_percentage" -lt "$setting" && "$is_charging" == "disabled" ]]; then
 
 		log "Disabling discharging: Charge below $setting, enabling charging"
-		# use direct commands since enable_charging also calls disable_discharging, and causes an eternal loop
-		sudo smc -k CH0B -w 00
-		sudo smc -k CH0C -w 00
-		change_magsafe_led_color "orange"
 
+		# use direct commands since enable_charging also calls disable_discharging, and causes an eternal loop
+		_enable_charging_internal
+
+		change_magsafe_led_color "orange"
 	fi
 
+	sleep 1
 	battery_percentage=$(get_battery_percentage)
 }
 
-# Re:charging, Aldente uses CH0B https://github.com/davidwernhart/AlDente/blob/0abfeafbd2232d16116c0fe5a6fbd0acb6f9826b/AlDente/Helper.swift#L227
-# but @joelucid uses CH0C https://github.com/davidwernhart/AlDente/issues/52#issuecomment-1019933570
-# so I'm using both since with only CH0B I noticed sometimes during sleep it does trigger charging
 function enable_charging() {
 	log "🔌🔋 Enabling battery charging"
-	sudo smc -k CH0B -w 00
-	sudo smc -k CH0C -w 00
+
 	disable_discharging
+
+	_enable_charging_internal
+
+	# magic sleep? added from BatteryOptimizerMac fork
+	sleep 1
+}
+
+# internal function to send only the correct SMC commands to enable charging, and do nothing else.
+# for example, does not first disable discharging, which should be done by the caller, if applicable.
+# this does not sleep after sending the commands, either.
+function _enable_charging_internal() {
+	# Re:charging, Aldente uses CH0B https://github.com/davidwernhart/AlDente/blob/0abfeafbd2232d16116c0fe5a6fbd0acb6f9826b/AlDente/Helper.swift#L227
+	# but @joelucid uses CH0C https://github.com/davidwernhart/AlDente/issues/52#issuecomment-1019933570
+	# so I'm using both since with only CH0B I noticed sometimes during sleep it does trigger charging
+
+	if [[ $(get_cpu_type) == "apple" ]]; then
+		if $has_CH0B; then write_smc CH0B 00; fi
+		if $has_CH0C; then write_smc CH0C 00; fi
+		if $has_CHTE && ! $has_CH0B; then write_smc CHTE 00000000; fi
+	else
+		if $has_BCLM; then write_smc BCLM 64; fi
+	fi
 }
 
 function disable_charging() {
 	log "🔌🪫 Disabling battery charging"
-	sudo smc -k CH0B -w 02
-	sudo smc -k CH0C -w 02
+
+	if [[ $(get_cpu_type) == "apple" ]]; then
+		if $has_CH0B; then write_smc CH0B 02; fi
+		if $has_CH0C; then write_smc CH0C 02; fi
+		if $has_CHTE && ! $has_CH0B; then write_smc CHTE 01000000; fi
+	else
+		if $has_BCLM; then write_smc BCLM 0a; fi
+	fi
+
+	# magic sleep? added from BatteryOptimizerMac fork
+	sleep 1
 }
 
 function get_smc_charging_status() {
@@ -248,11 +310,31 @@ function get_smc_charging_status() {
 }
 
 function get_smc_discharging_status() {
-	hex_status=$(smc -k CH0I -r | awk '{print $4}' | sed s:\)::)
-	if [[ "$hex_status" == "0" ]]; then
-		echo "not discharging"
+	if [[ $(get_cpu_type) == "apple" ]]; then
+		if $has_CH0I; then
+			hex_status=$(read_smc_hex CH0I)
+			if [[ "$hex_status" == "00" ]]; then
+				echo "not discharging"
+			else
+				echo "discharging"
+			fi
+		elif $has_CH0J; then
+			hex_status=$(read_smc_hex CH0J)
+			if [[ "$hex_status" == "00" ]]; then
+				echo "not discharging"
+			else
+				echo "discharging"
+			fi
+		else
+			echo "not discharging"
+		fi
 	else
-		echo "discharging"
+		acen_hex_status=$(read_smc_hex ACEN)
+		if [[ "$acen_hex_status" == "01" ]]; then
+			echo "not discharging"
+		else
+			echo "discharging"
+		fi
 	fi
 }
 
@@ -273,6 +355,42 @@ function get_remaining_time() {
 function get_charger_state() {
 	ac_attached=$(pmset -g batt | tail -n1 | awk '{ x=match($0, /AC attached/) > 0; print x }')
 	echo "$ac_attached"
+}
+
+function read_smc() { # read smc decimal value
+	val=$(read_smc_hex $1)
+	[[ -z $val ]] && echo || echo $((0x${val}))
+}
+
+function read_smc_hex() { # read smc hex value
+	key=$1
+	line=$(echo $(smc -k $key -r))
+	if [[ $line =~ "no data" ]]; then
+		echo
+	else
+		echo ${line#*bytes} | tr -d ' ' | tr -d ')'
+	fi
+}
+
+# Write SMC value
+function write_smc() {
+	key=$1
+	value=$2
+	echo "[write_smc] Writing SMC key: $key with value: $value"
+	sudo smc -k "$key" -w "$value"
+}
+
+function get_cpu_type() {
+	if [[ $(smc -k BCLM -r) == *"no data"* ]]; then
+		echo "apple"
+	else
+		echo "intel"
+	fi
+    #if [[ $(sysctl -n machdep.cpu.brand_string) == *"Intel"* ]]; then
+    #    echo "intel"
+    #else
+    #    echo "apple"
+    #fi
 }
 
 function get_maintain_percentage() {
