@@ -800,7 +800,7 @@ if [[ "$action" == "maintain_synchronous" ]]; then
 version=$BATTERY_CLI_VERSION
 pid=$$
 start_time=$(date +%s)
-start_date=$(date)
+start_date="$(date)"
 script_mtime=$(stat -f %m "$0" 2>/dev/null || echo "0")
 EOF
 	log "Wrote daemon metadata: version=$BATTERY_CLI_VERSION, pid=$$"
@@ -884,7 +884,7 @@ if [[ "$action" == "maintain_voltage_synchronous" ]]; then
 version=$BATTERY_CLI_VERSION
 pid=$$
 start_time=$(date +%s)
-start_date=$(date)
+start_date="$(date)"
 script_mtime=$(stat -f %m "$0" 2>/dev/null || echo "0")
 EOF
 	log "Wrote daemon metadata: version=$BATTERY_CLI_VERSION, pid=$$"
