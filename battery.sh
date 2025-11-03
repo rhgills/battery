@@ -1394,17 +1394,25 @@ if [[ "$action" == "debug" ]]; then
 		our_state="discharging"
 	fi
 
-	match_icon="✅"
-	if [[ "$our_state" != "unknown" && "$pmset_state" != "unknown" ]]; then
-		if [[ "$our_state" != "$pmset_state" ]]; then
-			match_icon="⚠️"
-		fi
+	# Determine match status
+	if [[ "$pmset_state" == "unknown" ]]; then
+		match_icon="⚠️"
+		match_msg="Cannot parse pmset state"
+	elif [[ "$our_state" == "unknown" ]]; then
+		match_icon="⚠️"
+		match_msg="Cannot determine SMC state"
+	elif [[ "$our_state" == "$pmset_state" ]]; then
+		match_icon="✅"
+		match_msg="States match"
+	else
+		match_icon="⚠️"
+		match_msg="States differ (expected with maintain active)"
 	fi
 
 	echo "Cross-Check:"
 	echo "  Our state:    $our_state"
 	echo "  pmset state:  $pmset_state"
-	echo "  Status:       $match_icon"
+	echo "  Status:       $match_icon $match_msg"
 
 	exit 0
 
@@ -1461,15 +1469,18 @@ if [[ "$action" == "doctor" ]]; then
 	echo "   SMC state:    $our_state"
 	echo "   pmset state:  $pmset_state"
 
-	if [[ "$our_state" != "unknown" && "$pmset_state" != "unknown" ]]; then
-		if [[ "$our_state" == "$pmset_state" ]]; then
-			echo "   ✅ States match"
-		else
-			echo "   ⚠️  MISMATCH detected"
-			echo "      This may indicate SMC control is active (expected with maintain)"
-		fi
+	if [[ "$pmset_state" == "unknown" ]]; then
+		echo "   ⚠️  Cannot parse pmset state"
+		echo "      pmset may be reporting an unexpected battery state"
+		echo "      Run 'pmset -g batt' to see raw output"
+	elif [[ "$our_state" == "unknown" ]]; then
+		echo "   ⚠️  Cannot determine SMC state"
+		echo "      This may indicate an issue with SMC access"
+	elif [[ "$our_state" == "$pmset_state" ]]; then
+		echo "   ✅ States match"
 	else
-		echo "   ⚠️  Cannot compare (unknown state)"
+		echo "   ⚠️  MISMATCH detected"
+		echo "      This may indicate SMC control is active (expected with maintain)"
 	fi
 	echo ""
 
