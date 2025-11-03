@@ -1590,6 +1590,95 @@ if [[ "$action" == "doctor" ]]; then
 	fi
 	echo ""
 
+	# 8. Battery Hardware Details from ioreg
+	echo "8. Battery Hardware Details (ioreg)..."
+	ioreg_output=$(ioreg -rc AppleSmartBattery 2>/dev/null)
+
+	if [[ -n "$ioreg_output" ]]; then
+		# Parse adapter info
+		adapter_watts=$(echo "$ioreg_output" | grep '"AdapterDetails"' | grep -o '"Watts"=[0-9]*' | cut -d= -f2)
+
+		# Parse battery metrics
+		voltage_mv=$(echo "$ioreg_output" | grep '"Voltage" = ' | grep -o '[0-9]*' | head -1)
+		amperage_ma=$(echo "$ioreg_output" | grep '"Amperage" = ' | grep -o '\-\?[0-9]*' | head -1)
+		temp_decideg=$(echo "$ioreg_output" | grep '"Temperature" = ' | grep -o '[0-9]*' | head -1)
+
+		# Parse capacity info
+		current_cap=$(echo "$ioreg_output" | grep '"AppleRawCurrentCapacity" = ' | grep -o '[0-9]*' | head -1)
+		design_cap=$(echo "$ioreg_output" | grep '"DesignCapacity" = ' | grep -o '[0-9]*' | head -1)
+		max_cap=$(echo "$ioreg_output" | grep '"AppleRawMaxCapacity" = ' | grep -o '[0-9]*' | head -1)
+		cycle_count=$(echo "$ioreg_output" | grep '"CycleCount" = ' | grep -o '[0-9]*' | head -1)
+		design_cycles=$(echo "$ioreg_output" | grep '"DesignCycleCount9C"' | grep -o '[0-9]*' | tail -1)
+
+		# Parse cell voltages
+		cell_voltages=$(echo "$ioreg_output" | grep '"CellVoltage"=(' | sed 's/.*"CellVoltage"=(\([^)]*\)).*/\1/' | tr ',' ' ')
+
+		# Calculate values
+		if [[ -n "$voltage_mv" && -n "$amperage_ma" ]]; then
+			voltage_v=$(awk "BEGIN {printf \"%.2f\", $voltage_mv / 1000}")
+			amperage_a=$(awk "BEGIN {printf \"%.2f\", $amperage_ma / 1000}")
+			power_w=$(awk "BEGIN {printf \"%.1f\", ($voltage_mv * $amperage_ma) / 1000000}")
+		fi
+
+		if [[ -n "$temp_decideg" ]]; then
+			temp_c=$(awk "BEGIN {printf \"%.0f\", $temp_decideg / 100}")
+		fi
+
+		if [[ -n "$current_cap" && -n "$design_cap" && "$design_cap" -gt 0 ]]; then
+			health_pct=$(awk "BEGIN {printf \"%.0f\", ($current_cap / $design_cap) * 100}")
+		fi
+
+		# Display results
+		if [[ -n "$adapter_watts" ]]; then
+			echo "   Adapter:          ${adapter_watts}W"
+		fi
+
+		if [[ -n "$voltage_v" && -n "$amperage_a" ]]; then
+			echo "   Power Flow:       ${power_w}W (${amperage_a}A @ ${voltage_v}V)"
+		fi
+
+		if [[ -n "$temp_c" ]]; then
+			echo "   Temperature:      ${temp_c}°C"
+		fi
+
+		if [[ -n "$health_pct" && -n "$current_cap" && -n "$design_cap" ]]; then
+			echo "   Health:           ${health_pct}% (${current_cap}/${design_cap} mAh)"
+			if [[ $health_pct -ge 80 ]]; then
+				echo "                     ✅ Good battery health"
+			elif [[ $health_pct -ge 60 ]]; then
+				echo "                     ⚠️  Battery showing age"
+			else
+				echo "                     ⚠️  Consider battery replacement"
+			fi
+		fi
+
+		if [[ -n "$cycle_count" && -n "$design_cycles" ]]; then
+			echo "   Cycle Count:      ${cycle_count} / ${design_cycles}"
+			cycles_pct=$(awk "BEGIN {printf \"%.0f\", ($cycle_count / $design_cycles) * 100}")
+			if [[ $cycles_pct -lt 50 ]]; then
+				echo "                     ✅ ${cycles_pct}% of design cycles used"
+			elif [[ $cycles_pct -lt 80 ]]; then
+				echo "                     ${cycles_pct}% of design cycles used"
+			else
+				echo "                     ⚠️  ${cycles_pct}% of design cycles used"
+			fi
+		fi
+
+		# Cell voltages
+		if [[ -n "$cell_voltages" ]]; then
+			echo "   Cell Voltages:"
+			cell_num=1
+			for cell_mv in $cell_voltages; do
+				cell_v=$(awk "BEGIN {printf \"%.3f\", $cell_mv / 1000}")
+				echo "     Cell $cell_num:         ${cell_v}V"
+				((cell_num++))
+			done
+		fi
+	else
+		echo "   ⚠️  Could not read battery hardware details from ioreg"
+	fi
+	echo ""
+
 	echo "📋 Summary:"
 	echo "   Run 'battery debug' for detailed SMC/pmset comparison"
 	echo "   Run 'battery logs 50' to view recent activity"
