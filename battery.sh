@@ -1,10 +1,16 @@
 #!/bin/bash
 
+# Set process name for Activity Monitor (only if not already set)
+if [[ -z "$BATTERY_PROCESS_NAME_SET" ]]; then
+	export BATTERY_PROCESS_NAME_SET=1
+	exec -a battery bash "$0" "$@"
+fi
+
 ## ###############
 ## Update management
 ## variables are used by this binary as well at the update script
 ## ###############
-BATTERY_CLI_VERSION="v1.2.7-rhgills-development"
+BATTERY_CLI_VERSION="v1.2.9-rhgills-development"
 
 # Path fixes for unexpected environments
 PATH=/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
@@ -55,15 +61,22 @@ Usage:
   battery status
     output battery SMC status, % and time remaining
 
+  battery version
+    show the current version of the battery utility
+
+  battery info
+    show detailed system information (version, daemon status, configuration)
+
   battery logs LINES[integer, optional]
     output logs of the battery CLI and GUI
 	eg: battery logs 100
 
-  battery maintain PERCENTAGE[1-100,stop]
+  battery maintain PERCENTAGE[1-100,stop,recover]
     reboot-persistent battery level maintenance: turn off charging above, and on below a certain value
 	it has the option of a --force-discharge flag that discharges even when plugged in (this does NOT work well with clamshell mode)
     eg: battery maintain 80
     eg: battery maintain stop
+    eg: battery maintain recover    # restart with previously saved settings
 
   battery maintain VOLTAGE[${voltage_min}V-${voltage_max}V,stop] (HYSTERESIS[${voltage_hyst_min}V-${voltage_hyst_max}V])
     reboot-persistent battery level maintenance: keep battery at a certain voltage
@@ -149,6 +162,12 @@ function log() {
 	echo -e "$(date +%D-%T) - $1"
 }
 
+function log_from_function() {
+	func_name=$1
+	shift
+	log "[$func_name] $*"
+}
+
 function valid_percentage() {
 	if ! [[ "$1" =~ ^[0-9]+$ ]] || [[ "$1" -lt 0 ]] || [[ "$1" -gt 100 ]]; then
 		return 1
@@ -184,14 +203,14 @@ function change_magsafe_led_color() {
 
 	if [[ "$color" == "green" ]]; then
 		log "setting LED to green"
-		write_smc ACLC 03
+		write_smc_labeled ACLC 03 "MagSafe LED: Green"
 	elif [[ "$color" == "orange" ]]; then
 		log "setting LED to orange"
-		write_smc ACLC 04
+		write_smc_labeled ACLC 04 "MagSafe LED: Orange"
 	else
 		# Default action: reset. Value 00 is a guess and needs confirmation
 		log "resetting LED"
-		write_smc ACLC 00
+		write_smc_labeled ACLC 00 "MagSafe LED: Reset"
 	fi
 }
 
@@ -202,13 +221,15 @@ function enable_discharging() {
 
 	# Re:discharging, we're using keys uncovered by @howie65: https://github.com/actuallymentor/battery/issues/20#issuecomment-1364540704
 	# CH0I seems to be the "disable the adapter" key
+	label="Enable Discharging"
+
 	if [[ $(get_cpu_type) == "apple" ]]; then
-		if $has_CH0I; then write_smc CH0I 01; fi
-		if $has_CH0J && ! $has_CH0I; then write_smc CH0J 01; fi
-		if $has_ACLC; then write_smc ACLC 01; fi
+		if $has_CH0I; then write_smc_labeled CH0I 01 "$label"; fi
+		if $has_CH0J && ! $has_CH0I; then write_smc_labeled CH0J 01 "$label"; fi
+		if $has_ACLC; then write_smc_labeled ACLC 01 "$label"; fi
 	else
-		if $has_BCLM; then write_smc BCLM 0a; fi
-		if $has_ACEN; then write_smc ACEN 00; fi
+		if $has_BCLM; then write_smc_labeled BCLM 0a "$label"; fi
+		if $has_ACEN; then write_smc_labeled ACEN 00 "$label"; fi
 	fi
 
 	sleep 1
@@ -216,13 +237,14 @@ function enable_discharging() {
 
 function disable_discharging() {
 	log "🔼🪫 Disabling battery discharging"
+	label="Disable Discharging"
 
 	# Disable discharging
 	if [[ $(get_cpu_type) == "apple" ]]; then
-		if $has_CH0I; then write_smc CH0I 00; fi
-		if $has_CH0J && ! $has_CH0I; then write_smc CH0J 00; fi
+		if $has_CH0I; then write_smc_labeled CH0I 00 "$label"; fi
+		if $has_CH0J && ! $has_CH0I; then write_smc_labeled CH0J 00 "$label"; fi #
 	else
-		if $has_ACEN; then write_smc ACEN 01; fi
+		if $has_ACEN; then write_smc_labeled ACEN 01 "$label"; fi
 	fi
 
 	# Keep track of status
@@ -275,25 +297,27 @@ function _enable_charging_internal() {
 	# Re:charging, Aldente uses CH0B https://github.com/davidwernhart/AlDente/blob/0abfeafbd2232d16116c0fe5a6fbd0acb6f9826b/AlDente/Helper.swift#L227
 	# but @joelucid uses CH0C https://github.com/davidwernhart/AlDente/issues/52#issuecomment-1019933570
 	# so I'm using both since with only CH0B I noticed sometimes during sleep it does trigger charging
+	label="Enable Charging"
 
 	if [[ $(get_cpu_type) == "apple" ]]; then
-		if $has_CH0B; then write_smc CH0B 00; fi
-		if $has_CH0C; then write_smc CH0C 00; fi
-		if $has_CHTE && ! $has_CH0B; then write_smc CHTE 00000000; fi
+		if $has_CH0B; then write_smc_labeled CH0B 00 "$label"; fi
+		if $has_CH0C; then write_smc_labeled CH0C 00 "$label"; fi
+		if $has_CHTE && ! $has_CH0B; then write_smc_labeled CHTE 00000000 "$label"; fi
 	else
-		if $has_BCLM; then write_smc BCLM 64; fi
+		if $has_BCLM; then write_smc_labeled BCLM 64 "$label"; fi
 	fi
 }
 
 function disable_charging() {
 	log "🔌🪫 Disabling battery charging"
+	label="Disable Charging"
 
 	if [[ $(get_cpu_type) == "apple" ]]; then
-		if $has_CH0B; then write_smc CH0B 02; fi
-		if $has_CH0C; then write_smc CH0C 02; fi
-		if $has_CHTE && ! $has_CH0B; then write_smc CHTE 01000000; fi
+		if $has_CH0B; then write_smc_labeled CH0B 02 "$label"; fi
+		if $has_CH0C; then write_smc_labeled CH0C 02 "$label"; fi
+		if $has_CHTE && ! $has_CH0B; then write_smc_labeled CHTE 01000000 "$label"; fi
 	else
-		if $has_BCLM; then write_smc BCLM 0a; fi
+		if $has_BCLM; then write_smc_labeled BCLM 0a "$label"; fi
 	fi
 
 	# magic sleep? added from BatteryOptimizerMac fork
@@ -369,14 +393,31 @@ function read_smc_hex() { # read smc hex value
 		echo
 	else
 		echo ${line#*bytes} | tr -d ' ' | tr -d ')'
-	fi
+		fi
 }
 
 # Write SMC value
 function write_smc() {
 	key=$1
 	value=$2
-	echo "[write_smc] Writing SMC key: $key with value: $value"
+	log_from_function "write_smc" "Writing SMC key: $key with value: $value"
+	sudo smc -k "$key" -w "$value"
+
+	# This errors out:
+	# [write_smc] Writing SMC key: CH0J with value: 00
+	# Error: SMCWriteKey() = e00002c1
+}
+
+# Write SMC value, passing a label for traceability and debugging purposes as the third argument.
+# Expected arguments:
+# key: SMC key to write to
+# value: value to write
+# label: label to log alongside the write operation
+function write_smc_labeled() {
+	key=$1
+	value=$2
+	label=$3
+	log_from_function "write_smc_labeled" "Writing to SMC for: $label. Setting key '$key' to '$value'."
 	sudo smc -k "$key" -w "$value"
 }
 
@@ -410,6 +451,113 @@ function get_voltage() {
 # Help message
 if [ -z "$action" ] || [[ "$action" == "help" ]]; then
 	echo -e "$helpmessage"
+	exit 0
+fi
+
+# Version message
+if [[ "$action" == "version" ]] || [[ "$action" == "-v" ]] || [[ "$action" == "--version" ]]; then
+	echo "battery $BATTERY_CLI_VERSION"
+	exit 0
+fi
+
+# Info command - comprehensive system information
+if [[ "$action" == "info" ]]; then
+	echo "Battery Utility Information"
+	echo ""
+	echo "Version: battery $BATTERY_CLI_VERSION"
+	echo ""
+
+	echo "Installation:"
+	echo "  Binary path:   $binfolder/battery"
+	echo "  SMC path:      $binfolder/smc"
+	echo "  Config folder: $configfolder"
+	echo "  Log file:      $logfile"
+	echo ""
+
+	# Check if symlinked (best effort detection)
+	if [[ -L "$binfolder/battery" ]]; then
+		symlink_target=$(readlink "$binfolder/battery")
+		echo "  Type: Symlinked (development mode)"
+		echo "  Target: $symlink_target"
+		echo ""
+	fi
+
+	echo "System:"
+	echo "  CPU type:      $(get_cpu_type)"
+	battery_percentage=$(get_battery_percentage)
+	echo "  Battery:       $battery_percentage%"
+	echo "  Voltage:       $(get_voltage)V"
+	echo "  Charging:      $(get_smc_charging_status)"
+	echo "  Discharging:   $(get_smc_discharging_status)"
+	echo ""
+
+	echo "Daemon Status:"
+	if test -f $pidfile; then
+		pid=$(cat $pidfile 2>/dev/null)
+		if ps -p $pid -o command= 2>/dev/null | grep -q "battery.*maintain"; then
+			echo "  Status: RUNNING (PID $pid)"
+
+			daemon_metadata_file="$configfolder/daemon.metadata"
+			if [[ -f "$daemon_metadata_file" ]]; then
+				source "$daemon_metadata_file" 2>/dev/null
+
+				if [[ -n "$version" ]]; then
+					echo "  Version: $version"
+				fi
+
+				if [[ -n "$start_date" ]]; then
+					echo "  Started: $start_date"
+				fi
+
+				if [[ -n "$start_time" ]]; then
+					current_time=$(date +%s)
+					elapsed=$((current_time - start_time))
+					hours=$((elapsed / 3600))
+					minutes=$(((elapsed % 3600) / 60))
+					if [[ $hours -gt 0 ]]; then
+						echo "  Uptime:  ${hours}h ${minutes}m"
+					else
+						echo "  Uptime:  ${minutes}m"
+					fi
+				fi
+
+				# Check for version mismatch
+				if [[ -n "$version" && "$version" != "$BATTERY_CLI_VERSION" ]]; then
+					echo "  ⚠️  Warning: Daemon version ($version) differs from installed version ($BATTERY_CLI_VERSION)"
+					echo "              Run 'battery maintain recover' to restart with current version"
+				fi
+
+				# Check if script modified since daemon start
+				if [[ -n "$script_mtime" && -f "$binfolder/battery" ]]; then
+					current_mtime=$(stat -f %m "$binfolder/battery" 2>/dev/null || echo "0")
+					if [[ "$current_mtime" -gt "$script_mtime" ]]; then
+						echo "  ⚠️  Warning: Script updated since daemon started"
+						echo "              Run 'battery maintain recover' to reload"
+					fi
+				fi
+			else
+				echo "  Metadata: Not available (daemon may be from older version)"
+			fi
+
+			# Show maintenance level
+			maintain_percentage=$(cat $maintain_percentage_tracker_file 2>/dev/null)
+			if [[ $maintain_percentage ]]; then
+				echo "  Maintaining: $maintain_percentage%"
+			else
+				maintain_voltage=$(cat $maintain_voltage_tracker_file 2>/dev/null)
+				if [[ $maintain_voltage ]]; then
+					echo "  Maintaining: $maintain_voltage"
+				fi
+			fi
+		else
+			echo "  Status: STALE (PID $pid not running)"
+			echo "  Run 'battery maintain recover' to restart"
+		fi
+	else
+		echo "  Status: NOT RUNNING"
+		echo "  Run 'battery maintain <percentage>' to start"
+	fi
+
 	exit 0
 fi
 
@@ -652,6 +800,17 @@ if [[ "$action" == "maintain_synchronous" ]]; then
 		fi
 	fi
 
+	# Write daemon metadata for version tracking and monitoring
+	daemon_metadata_file="$configfolder/daemon.metadata"
+	cat > "$daemon_metadata_file" <<EOF
+version=$BATTERY_CLI_VERSION
+pid=$$
+start_time=$(date +%s)
+start_date=$(date)
+script_mtime=$(stat -f %m "$0" 2>/dev/null || echo "0")
+EOF
+	log "Wrote daemon metadata: version=$BATTERY_CLI_VERSION, pid=$$"
+
 	if ! valid_percentage "$setting"; then
 		log "Error: $setting is not a valid setting for battery maintain. Please use a number between 0 and 100"
 		exit 1
@@ -725,6 +884,17 @@ if [[ "$action" == "maintain_voltage_synchronous" ]]; then
 		fi
 	fi
 
+	# Write daemon metadata for version tracking and monitoring
+	daemon_metadata_file="$configfolder/daemon.metadata"
+	cat > "$daemon_metadata_file" <<EOF
+version=$BATTERY_CLI_VERSION
+pid=$$
+start_time=$(date +%s)
+start_date=$(date)
+script_mtime=$(stat -f %m "$0" 2>/dev/null || echo "0")
+EOF
+	log "Wrote daemon metadata: version=$BATTERY_CLI_VERSION, pid=$$"
+
 	voltage=$(get_voltage)
 	lower_voltage=$(echo "$setting - $subsetting" | bc -l)
 	upper_voltage=$(echo "$setting + $subsetting" | bc -l)
@@ -772,6 +942,7 @@ if [[ "$action" == "maintain" ]]; then
 	if [[ "$setting" == "stop" ]]; then
 		log "Killing running maintain daemons & enabling charging as default state"
 		rm $pidfile 2>/dev/null
+		rm "$configfolder/daemon.metadata" 2>/dev/null
 		$battery_binary disable_daemon
 		enable_charging
 		$battery_binary status
@@ -813,10 +984,32 @@ if [[ "$action" == "maintain" ]]; then
 
 	# Start maintenance script
 	if [ "$is_voltage" = true ]; then
-		log "Starting battery maintenance at ${setting}V ±${subsetting}V"
+		# Resolve actual voltage for logging if recovering
+		if [[ "$setting" == "recover" ]]; then
+			maintain_voltage=$(cat $maintain_voltage_tracker_file 2>/dev/null)
+			if [[ $maintain_voltage ]]; then
+				recovered_setting=$(echo $maintain_voltage | awk '{print $1}')
+				recovered_subsetting=$(echo $maintain_voltage | awk '{print $2}')
+				log "Starting battery maintenance at ${recovered_setting}V ±${recovered_subsetting}V (recovered)"
+			else
+				log "Starting battery maintenance (recovering voltage settings)"
+			fi
+		else
+			log "Starting battery maintenance at ${setting}V ±${subsetting}V"
+		fi
 		nohup $battery_binary maintain_voltage_synchronous $setting $subsetting >>$logfile &
 	else
-		log "Starting battery maintenance at $setting% $subsetting"
+		# Resolve actual percentage for logging if recovering
+		if [[ "$setting" == "recover" ]]; then
+			maintain_percentage=$(cat $maintain_percentage_tracker_file 2>/dev/null)
+			if [[ $maintain_percentage ]]; then
+				log "Starting battery maintenance at $maintain_percentage% (recovered)"
+			else
+				log "Starting battery maintenance (recovering percentage settings)"
+			fi
+		else
+			log "Starting battery maintenance at $setting% $subsetting"
+		fi
 		nohup $battery_binary maintain_synchronous $setting $subsetting >>$logfile &
 	fi
 
@@ -911,14 +1104,48 @@ if [[ "$action" == "status" ]]; then
 
 	log "Battery at $(get_battery_percentage)% ($(get_remaining_time) remaining), $(get_voltage)V, smc charging $(get_smc_charging_status)"
 	if test -f $pidfile; then
-		maintain_percentage=$(cat $maintain_percentage_tracker_file 2>/dev/null)
-		if [[ $maintain_percentage ]]; then
-			maintain_level="$maintain_percentage%"
+		pid=$(cat $pidfile)
+
+		# Check if process exists AND is actually battery
+		if ps -p $pid -o command= 2>/dev/null | grep -q "battery.*maintain"; then
+			maintain_percentage=$(cat $maintain_percentage_tracker_file 2>/dev/null)
+			if [[ $maintain_percentage ]]; then
+				maintain_level="$maintain_percentage%"
+			else
+				maintain_level=$(cat $maintain_voltage_tracker_file 2>/dev/null)
+				maintain_level=$(echo "$maintain_level" | awk '{print $1 "V ±" $2 "V"}')
+			fi
+			log "Your battery is currently being maintained at $maintain_level"
+
+			# Show basic daemon info
+			daemon_metadata_file="$configfolder/daemon.metadata"
+			if [[ -f "$daemon_metadata_file" ]]; then
+				source "$daemon_metadata_file" 2>/dev/null
+				uptime_str=""
+				if [[ -n "$start_time" ]]; then
+					current_time=$(date +%s)
+					elapsed=$((current_time - start_time))
+					hours=$((elapsed / 3600))
+					minutes=$(((elapsed % 3600) / 60))
+					if [[ $hours -gt 0 ]]; then
+						uptime_str="${hours}h ${minutes}m"
+					else
+						uptime_str="${minutes}m"
+					fi
+				fi
+				log "Daemon: running (${version:-unknown}, uptime ${uptime_str:-unknown})"
+			else
+				log "Daemon: running (PID $pid)"
+			fi
 		else
-			maintain_level=$(cat $maintain_voltage_tracker_file 2>/dev/null)
-			maintain_level=$(echo "$maintain_level" | awk '{print $1 "V ±" $2 "V"}')
+			log "⚠️  Battery maintenance is NOT active (stale PID $pid)"
+			log "The maintain daemon appears to have stopped."
+			log "Run 'battery maintain recover' to restart, or 'battery maintain 80' to set a new limit."
+			rm $pidfile 2>/dev/null  # Clean up stale PID file
 		fi
-		log "Your battery is currently being maintained at $maintain_level"
+	else
+		log "Your battery is not being actively maintained."
+		log "Run 'battery maintain <percentage>' to enable charge limiting."
 	fi
 	exit 0
 
