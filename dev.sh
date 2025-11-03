@@ -170,8 +170,11 @@ case "$1" in
                 echo "🔄 Daemon: RUNNING (PID $pid)"
 
                 # Try to load metadata
-                if [[ -f "$HOME/.battery/daemon.metadata" ]]; then
-                    source "$HOME/.battery/daemon.metadata" 2>/dev/null
+                if command -v jq >/dev/null 2>&1 && [[ -f "$HOME/.battery/daemon.metadata" ]]; then
+                    version=$(jq -r '.version // ""' "$HOME/.battery/daemon.metadata" 2>/dev/null)
+                    start_date=$(jq -r '.start_date // ""' "$HOME/.battery/daemon.metadata" 2>/dev/null)
+                    start_time=$(jq -r '.start_time // ""' "$HOME/.battery/daemon.metadata" 2>/dev/null)
+                    script_mtime=$(jq -r '.script_mtime // ""' "$HOME/.battery/daemon.metadata" 2>/dev/null)
 
                     # Show version
                     if [[ -n "$version" ]]; then
@@ -205,10 +208,14 @@ case "$1" in
                         fi
                     fi
                 else
-                    # Fallback to ps if metadata missing
+                    # Fallback to ps if metadata missing or jq not available
                     daemon_start=$(ps -p "$pid" -o lstart= 2>/dev/null || echo "unknown")
                     echo "   Started: $daemon_start"
-                    echo "   Version: unknown (no metadata file)"
+                    if ! command -v jq >/dev/null 2>&1; then
+                        echo "   Version: unavailable (jq required - install: brew install jq)"
+                    else
+                        echo "   Version: unknown (no metadata file)"
+                    fi
                     if [[ -L "$INSTALL_PATH" ]]; then
                         echo "   💡 Run '$0 restart-daemon' to reload code changes"
                     fi

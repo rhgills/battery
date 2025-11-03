@@ -492,8 +492,11 @@ if [[ "$action" == "info" ]]; then
 			echo "  Status: RUNNING (PID $pid)"
 
 			daemon_metadata_file="$configfolder/daemon.metadata"
-			if [[ -f "$daemon_metadata_file" ]]; then
-				source "$daemon_metadata_file" 2>/dev/null
+			if command -v jq >/dev/null 2>&1 && [[ -f "$daemon_metadata_file" ]]; then
+				version=$(jq -r '.version // ""' "$daemon_metadata_file" 2>/dev/null)
+				start_date=$(jq -r '.start_date // ""' "$daemon_metadata_file" 2>/dev/null)
+				start_time=$(jq -r '.start_time // ""' "$daemon_metadata_file" 2>/dev/null)
+				script_mtime=$(jq -r '.script_mtime // ""' "$daemon_metadata_file" 2>/dev/null)
 
 				if [[ -n "$version" ]]; then
 					echo "  Version: $version"
@@ -530,7 +533,11 @@ if [[ "$action" == "info" ]]; then
 					fi
 				fi
 			else
-				echo "  Metadata: Not available (daemon may be from older version)"
+				if ! command -v jq >/dev/null 2>&1; then
+					echo "  Metadata: Not available (jq required - install: brew install jq)"
+				else
+					echo "  Metadata: Not available (daemon may be from older version)"
+				fi
 			fi
 
 			# Show maintenance level
@@ -796,14 +803,20 @@ if [[ "$action" == "maintain_synchronous" ]]; then
 
 	# Write daemon metadata for version tracking and monitoring
 	daemon_metadata_file="$configfolder/daemon.metadata"
-	cat > "$daemon_metadata_file" <<EOF
-version=$BATTERY_CLI_VERSION
-pid=$$
-start_time=$(date +%s)
-start_date="$(date)"
-script_mtime=$(stat -f %m "$0" 2>/dev/null || echo "0")
+	if command -v jq >/dev/null 2>&1; then
+		cat > "$daemon_metadata_file" <<EOF
+{
+  "version": "$BATTERY_CLI_VERSION",
+  "pid": $$,
+  "start_time": $(date +%s),
+  "start_date": "$(date)",
+  "script_mtime": $(stat -f %m "$0" 2>/dev/null || echo "0")
+}
 EOF
-	log "Wrote daemon metadata: version=$BATTERY_CLI_VERSION, pid=$$"
+		log "Wrote daemon metadata: version=$BATTERY_CLI_VERSION, pid=$$"
+	else
+		log "jq not found - skipping metadata (install: brew install jq)"
+	fi
 
 	if ! valid_percentage "$setting"; then
 		log "Error: $setting is not a valid setting for battery maintain. Please use a number between 0 and 100"
@@ -880,14 +893,20 @@ if [[ "$action" == "maintain_voltage_synchronous" ]]; then
 
 	# Write daemon metadata for version tracking and monitoring
 	daemon_metadata_file="$configfolder/daemon.metadata"
-	cat > "$daemon_metadata_file" <<EOF
-version=$BATTERY_CLI_VERSION
-pid=$$
-start_time=$(date +%s)
-start_date="$(date)"
-script_mtime=$(stat -f %m "$0" 2>/dev/null || echo "0")
+	if command -v jq >/dev/null 2>&1; then
+		cat > "$daemon_metadata_file" <<EOF
+{
+  "version": "$BATTERY_CLI_VERSION",
+  "pid": $$,
+  "start_time": $(date +%s),
+  "start_date": "$(date)",
+  "script_mtime": $(stat -f %m "$0" 2>/dev/null || echo "0")
+}
 EOF
-	log "Wrote daemon metadata: version=$BATTERY_CLI_VERSION, pid=$$"
+		log "Wrote daemon metadata: version=$BATTERY_CLI_VERSION, pid=$$"
+	else
+		log "jq not found - skipping metadata (install: brew install jq)"
+	fi
 
 	voltage=$(get_voltage)
 	lower_voltage=$(echo "$setting - $subsetting" | bc -l)
@@ -1134,8 +1153,9 @@ if [[ "$action" == "status" ]]; then
 
 			# Show basic daemon info
 			daemon_metadata_file="$configfolder/daemon.metadata"
-			if [[ -f "$daemon_metadata_file" ]]; then
-				source "$daemon_metadata_file" 2>/dev/null
+			if command -v jq >/dev/null 2>&1 && [[ -f "$daemon_metadata_file" ]]; then
+				version=$(jq -r '.version // ""' "$daemon_metadata_file" 2>/dev/null)
+				start_time=$(jq -r '.start_time // ""' "$daemon_metadata_file" 2>/dev/null)
 				uptime_str=""
 				if [[ -n "$start_time" ]]; then
 					current_time=$(date +%s)
