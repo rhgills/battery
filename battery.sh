@@ -377,8 +377,15 @@ function get_remaining_time() {
 }
 
 function get_charger_state() {
-	ac_attached=$(pmset -g batt | tail -n1 | awk '{ x=match($0, /AC attached/) > 0; print x }')
-	echo "$ac_attached"
+	# Check for AC Power in first line or "AC attached" in battery line
+	pmset_output=$(pmset -g batt)
+	if echo "$pmset_output" | head -1 | grep -q "'AC Power'"; then
+		echo "1"
+	elif echo "$pmset_output" | tail -n1 | grep -q "AC attached"; then
+		echo "1"
+	else
+		echo "0"
+	fi
 }
 
 function read_smc() { # read smc decimal value
