@@ -65,6 +65,12 @@ Usage:
     output logs of the battery CLI and GUI
 	eg: battery logs 100
 
+  battery debug
+    cross-check battery state between SMC and system (pmset), show raw SMC values
+
+  battery doctor
+    comprehensive health check of battery tool installation and configuration
+
   battery maintain PERCENTAGE[1-100,stop,recover]
     reboot-persistent battery level maintenance: turn off charging above, and on below a certain value
 	it has the option of a --force-discharge flag that discharges even when plugged in (this does NOT work well with clamshell mode)
@@ -481,8 +487,35 @@ if [[ "$action" == "info" ]]; then
 	battery_percentage=$(get_battery_percentage)
 	echo "  Battery:       $battery_percentage%"
 	echo "  Voltage:       $(get_voltage)V"
-	echo "  Charging:      $(get_smc_charging_status)"
-	echo "  Discharging:   $(get_smc_discharging_status)"
+	charging_status=$(get_smc_charging_status)
+	discharging_status=$(get_smc_discharging_status)
+	echo "  Charging:      $charging_status"
+	echo "  Discharging:   $discharging_status"
+	echo ""
+
+	# Add pmset cross-check
+	echo "System View (pmset):"
+	pmset_output=$(pmset -g batt)
+	power_source=$(echo "$pmset_output" | head -1 | grep -o "'[^']*'" | tr -d "'")
+	pmset_state=$(echo "$pmset_output" | grep InternalBattery | grep -o "charging\|discharging\|charged\|AC attached" || echo "unknown")
+	pmset_pct=$(echo "$pmset_output" | grep InternalBattery | grep -o "[0-9]*%" | tr -d '%')
+
+	echo "  Power Source:  $power_source"
+	echo "  Battery:       ${pmset_pct}%"
+	echo "  State:         $pmset_state"
+
+	# Quick validation check
+	our_state="unknown"
+	if [[ "$charging_status" == "enabled" ]]; then
+		our_state="charging"
+	elif [[ "$discharging_status" == "discharging" ]]; then
+		our_state="discharging"
+	fi
+
+	if [[ "$our_state" != "unknown" && "$pmset_state" != "unknown" && "$our_state" != "$pmset_state" ]]; then
+		echo "  ⚠️  Mismatch: SMC shows '$our_state' but system shows '$pmset_state'"
+		echo "     Run 'battery debug' for detailed cross-check"
+	fi
 	echo ""
 
 	echo "Daemon Status:"
@@ -1308,6 +1341,241 @@ if [[ "$action" == "logs" ]]; then
 	echo -e "\n⚙️	Battery data:\n"
 	$battery_binary status
 	$battery_binary | grep -E "v\d.*"
+
+	exit 0
+
+fi
+
+# Debug command - cross-check battery state
+if [[ "$action" == "debug" ]]; then
+
+	echo "🔍 Battery Debug Information"
+	echo ""
+	echo "Our Tool (via SMC):"
+
+	# Get our view
+	charging_status=$(get_smc_charging_status)
+	discharging_status=$(get_smc_discharging_status)
+	battery_pct=$(get_battery_percentage)
+	voltage=$(get_voltage)
+
+	echo "  Charging:     $charging_status"
+	echo "  Discharging:  $discharging_status"
+	echo "  Battery:      $battery_pct%"
+	echo "  Voltage:      ${voltage}V"
+
+	# Get raw SMC values using internal function
+	echo ""
+	echo "Raw SMC Keys:"
+	ch0b=$(read_smc_hex CH0B 2>/dev/null || echo "N/A")
+	ch0c=$(read_smc_hex CH0C 2>/dev/null || echo "N/A")
+	ch0i=$(read_smc_hex CH0I 2>/dev/null || echo "N/A")
+	ch0j=$(read_smc_hex CH0J 2>/dev/null || echo "N/A")
+	aclc=$(read_smc_hex ACLC 2>/dev/null || echo "N/A")
+	echo "  CH0B: $ch0b  CH0C: $ch0c  CH0I: $ch0i  CH0J: $ch0j  ACLC: $aclc"
+
+	# Get system view via pmset
+	echo ""
+	echo "System (pmset -g batt):"
+	pmset_output=$(pmset -g batt)
+	echo "$pmset_output" | grep -v "^$" | sed 's/^/  /'
+
+	# Parse pmset for cross-check
+	echo ""
+	power_source=$(echo "$pmset_output" | head -1 | grep -o "'[^']*'" | tr -d "'")
+	pmset_state=$(echo "$pmset_output" | grep InternalBattery | grep -o "charging\|discharging\|charged\|AC attached" || echo "unknown")
+	pmset_pct=$(echo "$pmset_output" | grep InternalBattery | grep -o "[0-9]*%" | tr -d '%')
+
+	# Cross-check logic
+	our_state="unknown"
+	if [[ "$charging_status" == "enabled" ]]; then
+		our_state="charging"
+	elif [[ "$discharging_status" == "discharging" ]]; then
+		our_state="discharging"
+	fi
+
+	match_icon="✅"
+	if [[ "$our_state" != "unknown" && "$pmset_state" != "unknown" ]]; then
+		if [[ "$our_state" != "$pmset_state" ]]; then
+			match_icon="⚠️"
+		fi
+	fi
+
+	echo "Cross-Check:"
+	echo "  Our state:    $our_state"
+	echo "  pmset state:  $pmset_state"
+	echo "  Status:       $match_icon"
+
+	exit 0
+
+fi
+
+# Doctor command - comprehensive health check
+if [[ "$action" == "doctor" ]]; then
+
+	echo "🩺 Battery Tool Health Check"
+	echo ""
+
+	# 1. Check SMC access
+	echo "1. Checking SMC access..."
+	if command -v smc >/dev/null 2>&1; then
+		if smc -l >/dev/null 2>&1; then
+			echo "   ✅ SMC accessible"
+		else
+			echo "   ⚠️  SMC command found but cannot read keys"
+			echo "      This may require sudo access or system permissions"
+		fi
+	else
+		echo "   ❌ SMC command not found in PATH"
+		echo "      Expected at: $binfolder/smc"
+	fi
+	echo ""
+
+	# 2. Check pmset access
+	echo "2. Checking pmset access..."
+	if command -v pmset >/dev/null 2>&1; then
+		if pmset -g batt >/dev/null 2>&1; then
+			echo "   ✅ pmset accessible"
+		else
+			echo "   ⚠️  pmset found but cannot read battery info"
+		fi
+	else
+		echo "   ❌ pmset command not found"
+	fi
+	echo ""
+
+	# 3. Compare charging states
+	echo "3. Comparing battery states..."
+	charging_status=$(get_smc_charging_status)
+	discharging_status=$(get_smc_discharging_status)
+	our_state="unknown"
+	if [[ "$charging_status" == "enabled" ]]; then
+		our_state="charging"
+	elif [[ "$discharging_status" == "discharging" ]]; then
+		our_state="discharging"
+	fi
+
+	pmset_output=$(pmset -g batt 2>/dev/null)
+	pmset_state=$(echo "$pmset_output" | grep InternalBattery | grep -o "charging\|discharging\|charged\|AC attached" || echo "unknown")
+
+	echo "   SMC state:    $our_state"
+	echo "   pmset state:  $pmset_state"
+
+	if [[ "$our_state" != "unknown" && "$pmset_state" != "unknown" ]]; then
+		if [[ "$our_state" == "$pmset_state" ]]; then
+			echo "   ✅ States match"
+		else
+			echo "   ⚠️  MISMATCH detected"
+			echo "      This may indicate SMC control is active (expected with maintain)"
+		fi
+	else
+		echo "   ⚠️  Cannot compare (unknown state)"
+	fi
+	echo ""
+
+	# 4. Check daemon
+	echo "4. Checking daemon..."
+	if test -f $pidfile; then
+		pid=$(cat $pidfile 2>/dev/null)
+		if ps -p $pid -o command= 2>/dev/null | grep -q "battery.*maintain"; then
+			echo "   ✅ Daemon running (PID $pid)"
+
+			# Check metadata
+			daemon_metadata_file="$configfolder/daemon.metadata"
+			if command -v jq >/dev/null 2>&1 && [[ -f "$daemon_metadata_file" ]]; then
+				version=$(jq -r '.version // ""' "$daemon_metadata_file" 2>/dev/null)
+				if [[ -n "$version" ]]; then
+					echo "   ✅ Metadata present (version: $version)"
+					if [[ "$version" != "$BATTERY_CLI_VERSION" ]]; then
+						echo "      ⚠️  Version mismatch: daemon=$version, installed=$BATTERY_CLI_VERSION"
+					fi
+				fi
+			else
+				if ! command -v jq >/dev/null 2>&1; then
+					echo "   ⚠️  Metadata unavailable (jq not installed)"
+				else
+					echo "   ⚠️  Metadata file missing"
+				fi
+			fi
+		else
+			echo "   ⚠️  PID file exists but daemon not running (stale PID)"
+		fi
+	else
+		echo "   ℹ️  No daemon running (not maintaining)"
+	fi
+	echo ""
+
+	# 5. Check file permissions
+	echo "5. Checking file permissions..."
+	if [[ -f "$binfolder/battery" ]]; then
+		owner=$(ls -l "$binfolder/battery" | awk '{print $3}')
+		echo "   ✅ Binary exists ($binfolder/battery)"
+		echo "      Owner: $owner"
+	else
+		echo "   ❌ Binary not found at $binfolder/battery"
+	fi
+
+	if [[ -d "$configfolder" ]]; then
+		owner=$(ls -ld "$configfolder" | awk '{print $3}')
+		echo "   ✅ Config folder exists ($configfolder)"
+		echo "      Owner: $owner"
+	else
+		echo "   ⚠️  Config folder missing: $configfolder"
+	fi
+
+	if [[ -f "$logfile" ]]; then
+		echo "   ✅ Log file exists"
+	else
+		echo "   ℹ️  Log file will be created on first use"
+	fi
+	echo ""
+
+	# 6. Check sudoers configuration
+	echo "6. Checking sudoers configuration..."
+	if sudo -n smc -l >/dev/null 2>&1; then
+		echo "   ✅ SMC sudo access configured"
+	else
+		echo "   ⚠️  SMC requires password (visudo not configured)"
+		echo "      Run: battery visudo"
+	fi
+	echo ""
+
+	# 7. Check for common issues
+	echo "7. Checking for common issues..."
+	issues_found=false
+
+	# Check CPU type compatibility
+	cpu_type=$(get_cpu_type)
+	if [[ "$cpu_type" == "apple" ]]; then
+		echo "   ✅ Apple Silicon detected (supported)"
+	elif [[ "$cpu_type" == "intel" ]]; then
+		echo "   ✅ Intel CPU detected (supported)"
+	else
+		echo "   ⚠️  Unknown CPU type: $cpu_type"
+		issues_found=true
+	fi
+
+	# Check if maintain is active but percentage is above target
+	if test -f $pidfile; then
+		maintain_pct=$(cat $maintain_percentage_tracker_file 2>/dev/null)
+		if [[ -n "$maintain_pct" ]]; then
+			battery_pct=$(get_battery_percentage)
+			if [[ $battery_pct -gt $maintain_pct ]]; then
+				echo "   ℹ️  Battery ($battery_pct%) above maintain target ($maintain_pct%)"
+				echo "      This is normal - tool prevents charging above target"
+			fi
+		fi
+	fi
+
+	if ! $issues_found; then
+		echo "   ✅ No common issues detected"
+	fi
+	echo ""
+
+	echo "📋 Summary:"
+	echo "   Run 'battery debug' for detailed SMC/pmset comparison"
+	echo "   Run 'battery logs 50' to view recent activity"
+	echo "   Run 'battery status' for current battery state"
 
 	exit 0
 
