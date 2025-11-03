@@ -1381,6 +1381,50 @@ if [[ "$action" == "debug" ]]; then
 	aclc=$(read_smc_hex ACLC 2>/dev/null || echo "N/A")
 	echo "  CH0B: $ch0b  CH0C: $ch0c  CH0I: $ch0i  CH0J: $ch0j  ACLC: $aclc"
 
+	# Get hardware metrics from ioreg
+	echo ""
+	echo "Hardware (ioreg):"
+	ioreg_output=$(ioreg -rc AppleSmartBattery 2>/dev/null)
+
+	if [[ -n "$ioreg_output" ]]; then
+		# Parse adapter info
+		adapter_watts=$(echo "$ioreg_output" | grep '"AdapterDetails"' | grep -o '"Watts"=[0-9]*' | cut -d= -f2)
+
+		# Parse power flow metrics
+		voltage_mv=$(echo "$ioreg_output" | grep '"Voltage" = ' | grep -o '[0-9]*' | head -1)
+		amperage_ma=$(echo "$ioreg_output" | grep '"Amperage" = ' | grep -o '\-\?[0-9]*' | head -1)
+
+		# Display adapter
+		if [[ -n "$adapter_watts" && "$adapter_watts" -gt 0 ]]; then
+			echo "  Adapter:      ${adapter_watts}W"
+		else
+			echo "  Adapter:      Not connected or unknown"
+		fi
+
+		# Calculate and display power flow
+		if [[ -n "$voltage_mv" && -n "$amperage_ma" ]]; then
+			voltage_v=$(awk "BEGIN {printf \"%.2f\", $voltage_mv / 1000}")
+			amperage_a=$(awk "BEGIN {printf \"%.2f\", $amperage_ma / 1000}")
+			power_w=$(awk "BEGIN {printf \"%.1f\", ($voltage_mv * $amperage_ma) / 1000000}")
+
+			# Determine power direction
+			if [[ "${power_w:0:1}" == "-" ]]; then
+				power_direction="(discharging)"
+			elif [[ "$power_w" == "0.0" || "$power_w" == "-0.0" ]]; then
+				power_direction="(idle/maintaining)"
+			else
+				power_direction="(charging)"
+			fi
+
+			echo "  Power Flow:   ${power_w}W ${power_direction}"
+			echo "                ${amperage_a}A @ ${voltage_v}V"
+		else
+			echo "  Power Flow:   Unable to read"
+		fi
+	else
+		echo "  Unable to read ioreg data"
+	fi
+
 	# Get system view via pmset
 	echo ""
 	echo "System (pmset -g batt):"
