@@ -497,7 +497,7 @@ if [[ "$action" == "info" ]]; then
 	echo "System View (pmset):"
 	pmset_output=$(pmset -g batt)
 	power_source=$(echo "$pmset_output" | head -1 | grep -o "'[^']*'" | tr -d "'")
-	pmset_state=$(echo "$pmset_output" | grep InternalBattery | grep -o "charging\|discharging\|charged\|AC attached" || echo "unknown")
+	pmset_state=$(echo "$pmset_output" | grep InternalBattery | grep -o "charging\|discharging\|charged\|finishing charge\|AC attached" || echo "unknown")
 	pmset_pct=$(echo "$pmset_output" | grep InternalBattery | grep -o "[0-9]*%" | tr -d '%')
 
 	echo "  Power Source:  $power_source"
@@ -1383,7 +1383,7 @@ if [[ "$action" == "debug" ]]; then
 	# Parse pmset for cross-check
 	echo ""
 	power_source=$(echo "$pmset_output" | head -1 | grep -o "'[^']*'" | tr -d "'")
-	pmset_state=$(echo "$pmset_output" | grep InternalBattery | grep -o "charging\|discharging\|charged\|AC attached" || echo "unknown")
+	pmset_state=$(echo "$pmset_output" | grep InternalBattery | grep -o "charging\|discharging\|charged\|finishing charge\|AC attached" || echo "unknown")
 	pmset_pct=$(echo "$pmset_output" | grep InternalBattery | grep -o "[0-9]*%" | tr -d '%')
 
 	# Cross-check logic
@@ -1456,7 +1456,7 @@ if [[ "$action" == "doctor" ]]; then
 	fi
 
 	pmset_output=$(pmset -g batt 2>/dev/null)
-	pmset_state=$(echo "$pmset_output" | grep InternalBattery | grep -o "charging\|discharging\|charged\|AC attached" || echo "unknown")
+	pmset_state=$(echo "$pmset_output" | grep InternalBattery | grep -o "charging\|discharging\|charged\|finishing charge\|AC attached" || echo "unknown")
 
 	echo "   SMC state:    $our_state"
 	echo "   pmset state:  $pmset_state"
