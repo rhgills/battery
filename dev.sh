@@ -144,6 +144,17 @@ case "$1" in
             echo "   Target: $target"
             if [[ "$target" == "$BATTERY_SCRIPT" ]]; then
                 echo "   ✅ Points to this repository"
+
+                # Show git information when symlinked to this repo
+                if git -C "$SCRIPT_DIR" rev-parse --git-dir >/dev/null 2>&1; then
+                    git_sha=$(git -C "$SCRIPT_DIR" rev-parse --short HEAD 2>/dev/null)
+                    echo "   Git SHA: $git_sha"
+
+                    # Check if working directory is dirty
+                    if ! git -C "$SCRIPT_DIR" diff-index --quiet HEAD -- 2>/dev/null; then
+                        echo "   ⚠️  Working directory has uncommitted changes"
+                    fi
+                fi
             else
                 echo "   ⚠️  Points to different location"
             fi

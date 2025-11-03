@@ -1,5 +1,11 @@
 #!/bin/bash
 
+# Set process name for Activity Monitor (only if not already set)
+if [[ -z "$BATTERY_PROCESS_NAME_SET" ]]; then
+	export BATTERY_PROCESS_NAME_SET=1
+	exec -a battery bash "$0" "$@"
+fi
+
 ## ###############
 ## Update management
 ## variables are used by this binary as well at the update script
@@ -54,6 +60,12 @@ Usage:
 
   battery status
     output battery SMC status, % and time remaining
+
+  battery version
+    show the current version of the battery utility
+
+  battery info
+    show detailed system information (version, daemon status, configuration)
 
   battery logs LINES[integer, optional]
     output logs of the battery CLI and GUI
@@ -161,6 +173,12 @@ subsetting=$3
 
 function log() {
 	echo -e "$(date +%D-%T) - $1"
+}
+
+function log_from_function() {
+	func_name=$1
+	shift
+	log "[$func_name] $*"
 }
 
 function valid_percentage() {
@@ -970,25 +988,6 @@ if [[ "$action" == "maintain_voltage_synchronous" ]]; then
 		fi
 	fi
 
-=======
-	# Write daemon metadata for version tracking and monitoring
-	daemon_metadata_file="$configfolder/daemon.metadata"
-	if command -v jq >/dev/null 2>&1; then
-		cat > "$daemon_metadata_file" <<EOF
-{
-  "version": "$BATTERY_CLI_VERSION",
-  "pid": $$,
-  "start_time": $(date +%s),
-  "start_date": "$(date)",
-  "script_mtime": $(stat -f %m "$0" 2>/dev/null || echo "0")
-}
-EOF
-		log "Wrote daemon metadata: version=$BATTERY_CLI_VERSION, pid=$$"
-	else
-		log "jq not found - skipping metadata (install: brew install jq)"
-	fi
-
->>>>>>> 5613889 (fix: quote start_date in daemon.metadata to prevent sourcing errors)
 	voltage=$(get_voltage)
 	lower_voltage=$(echo "$setting - $subsetting" | bc -l)
 	upper_voltage=$(echo "$setting + $subsetting" | bc -l)
@@ -1045,6 +1044,7 @@ if [[ "$action" == "maintain" ]]; then
 
 		# Clean up
 		rm $pidfile 2>/dev/null
+		rm "$configfolder/daemon.metadata" 2>/dev/null
 		$battery_binary disable_daemon
 		enable_charging
 		$battery_binary status
@@ -1225,25 +1225,28 @@ if [[ "$action" == "status" ]]; then
 	log "Battery at $(get_battery_percentage)% ($(get_remaining_time) remaining), $(get_voltage)V, smc charging $(get_smc_charging_status)"
 	if test -f $pidfile; then
 		pid=$(cat $pidfile 2>/dev/null)
-		maintain_percentage=$(cat $maintain_percentage_tracker_file 2>/dev/null)
-		if [[ $maintain_percentage ]]; then
-			if valid_percentage_range "$maintain_percentage"; then
-				maintain_level="${maintain_percentage/-/% - }%"
-			else
-				maintain_level="$maintain_percentage%"
-			fi
-		else
-			maintain_level=$(cat $maintain_voltage_tracker_file 2>/dev/null)
-			maintain_level=$(echo "$maintain_level" | awk '{print $1 "V ±" $2 "V"}')
-		fi
-		log "Your battery is currently being maintained at $maintain_level"
 
-		# Show basic daemon info
-		daemon_metadata_file="$configfolder/daemon.metadata"
-		if command -v jq >/dev/null 2>&1 && [[ -f "$daemon_metadata_file" ]]; then
-			version=$(jq -r '.version // ""' "$daemon_metadata_file" 2>/dev/null)
-			start_time=$(jq -r '.start_time // ""' "$daemon_metadata_file" 2>/dev/null)
-			uptime_str=""
+		# Check if process exists AND is actually battery
+		if ps -p $pid -o command= 2>/dev/null | grep -q "battery.*maintain"; then
+			maintain_percentage=$(cat $maintain_percentage_tracker_file 2>/dev/null)
+			if [[ $maintain_percentage ]]; then
+				if valid_percentage_range "$maintain_percentage"; then
+					maintain_level="${maintain_percentage/-/% - }%"
+				else
+					maintain_level="$maintain_percentage%"
+				fi
+			else
+				maintain_level=$(cat $maintain_voltage_tracker_file 2>/dev/null)
+				maintain_level=$(echo "$maintain_level" | awk '{print $1 "V ±" $2 "V"}')
+			fi
+			log "Your battery is currently being maintained at $maintain_level"
+
+			# Show basic daemon info
+			daemon_metadata_file="$configfolder/daemon.metadata"
+			if command -v jq >/dev/null 2>&1 && [[ -f "$daemon_metadata_file" ]]; then
+				version=$(jq -r '.version // ""' "$daemon_metadata_file" 2>/dev/null)
+				start_time=$(jq -r '.start_time // ""' "$daemon_metadata_file" 2>/dev/null)
+				uptime_str=""
 			if [[ -n "$start_time" ]]; then
 				current_time=$(date +%s)
 				elapsed=$((current_time - start_time))
@@ -1259,6 +1262,15 @@ if [[ "$action" == "status" ]]; then
 		else
 			log "Daemon: running (PID $pid)"
 		fi
+		else
+			log "⚠️  Battery maintenance is NOT active (stale PID $pid)"
+			log "The maintain daemon appears to have stopped."
+			log "Run 'battery maintain recover' to restart, or 'battery maintain 80' to set a new limit."
+			rm $pidfile 2>/dev/null  # Clean up stale PID file
+		fi
+	else
+		log "Your battery is not being actively maintained."
+		log "Run 'battery maintain <percentage>' to enable charge limiting."
 	fi
 	exit 0
 

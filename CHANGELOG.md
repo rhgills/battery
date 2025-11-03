@@ -17,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - `status` - Check installation and daemon status
   - `test` - Run local version without installing
 - **Daemon metadata tracking**: Daemon now writes version, PID, start time, and script mtime to `~/.battery/daemon.metadata` for monitoring
+- **Process name in Activity Monitor**: Scripts now show as "battery" instead of "bash" using `exec -a`
 
 ### Fixed
 - **Critical SMC write bug**: Fixed `write_smc_labeled()` using `-l` (list) instead of `-w` (write), which caused SMC data dumps during daemon operations
