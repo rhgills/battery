@@ -1,11 +1,5 @@
 #!/bin/bash
 
-# Set process name for Activity Monitor (only if not already set)
-if [[ -z "$BATTERY_PROCESS_NAME_SET" ]]; then
-	export BATTERY_PROCESS_NAME_SET=1
-	exec -a battery bash "$0" "$@"
-fi
-
 ## ###############
 ## Update management
 ## variables are used by this binary as well at the update script
@@ -940,7 +934,16 @@ if [[ "$action" == "maintain" ]]; then
 	fi
 
 	if [[ "$setting" == "stop" ]]; then
-		log "Killing running maintain daemons & enabling charging as default state"
+		log "Stopping maintain daemon & enabling charging as default state"
+
+		# Stop via launchctl
+		launchd_label="gui/$(id -u $USER)/com.battery.app"
+		if launchctl list | grep -q "com.battery.app"; then
+			log "Stopping daemon via launchctl"
+			launchctl bootout "$launchd_label" 2>/dev/null || launchctl unload "$daemon_path" 2>/dev/null
+		fi
+
+		# Clean up
 		rm $pidfile 2>/dev/null
 		rm "$configfolder/daemon.metadata" 2>/dev/null
 		$battery_binary disable_daemon
@@ -982,9 +985,8 @@ if [[ "$action" == "maintain" ]]; then
 
 	fi
 
-	# Start maintenance script
+	# Resolve and log the settings
 	if [ "$is_voltage" = true ]; then
-		# Resolve actual voltage for logging if recovering
 		if [[ "$setting" == "recover" ]]; then
 			maintain_voltage=$(cat $maintain_voltage_tracker_file 2>/dev/null)
 			if [[ $maintain_voltage ]]; then
@@ -997,9 +999,7 @@ if [[ "$action" == "maintain" ]]; then
 		else
 			log "Starting battery maintenance at ${setting}V ±${subsetting}V"
 		fi
-		nohup $battery_binary maintain_voltage_synchronous $setting $subsetting >>$logfile &
 	else
-		# Resolve actual percentage for logging if recovering
 		if [[ "$setting" == "recover" ]]; then
 			maintain_percentage=$(cat $maintain_percentage_tracker_file 2>/dev/null)
 			if [[ $maintain_percentage ]]; then
@@ -1010,32 +1010,47 @@ if [[ "$action" == "maintain" ]]; then
 		else
 			log "Starting battery maintenance at $setting% $subsetting"
 		fi
-		nohup $battery_binary maintain_synchronous $setting $subsetting >>$logfile &
 	fi
 
-	# Store pid of maintenance process and setting
-	echo $! >$pidfile
-	pid=$(cat "$pidfile" 2>/dev/null)
-
+	# Save settings to tracker files (unless recovering)
 	if ! [[ "$setting" == "recover" ]]; then
-
-		rm "$maintain_percentage_tracker_file" "$maintain_voltage_tracker_file" 2>/dev/null
-
 		if [[ "$is_voltage" = true ]]; then
-			log "Writing new setting $setting $subsetting to $maintain_voltage_tracker_file"
+			rm "$maintain_percentage_tracker_file" 2>/dev/null
 			echo "$setting $subsetting" >$maintain_voltage_tracker_file
-			log "Maintaining battery at ${setting}V ±${subsetting}V"
-
+			log "Saved voltage settings: ${setting}V ±${subsetting}V"
 		else
-			log "Writing new setting $setting to $maintain_percentage_tracker_file"
+			rm "$maintain_voltage_tracker_file" 2>/dev/null
 			echo $setting >$maintain_percentage_tracker_file
-			log "Maintaining battery at $setting%"
+			log "Saved percentage setting: $setting%"
 		fi
-
 	fi
 
-	# Enable the daemon that continues maintaining after reboot
+	# Create/update and start the daemon via launchd
 	$battery_binary create_daemon
+
+	# Start daemon via launchctl
+	launchd_label="gui/$(id -u $USER)/com.battery.app"
+
+	# Check if already loaded
+	if launchctl list | grep -q "com.battery.app"; then
+		log "Restarting daemon via launchctl"
+		launchctl kickstart -k "$launchd_label" 2>/dev/null
+	else
+		log "Starting daemon via launchctl"
+		launchctl bootstrap "$launchd_label" "$daemon_path" 2>/dev/null || launchctl load "$daemon_path" 2>/dev/null
+	fi
+
+	# Wait a moment for daemon to start and write PID
+	sleep 1
+
+	# Get PID from launchctl (strip trailing semicolon)
+	daemon_pid=$(launchctl list com.battery.app 2>/dev/null | awk '/PID/ {print $NF}' | tr -d ';')
+	if [[ -n "$daemon_pid" && "$daemon_pid" != "-" ]]; then
+		echo $daemon_pid > $pidfile
+		log "Daemon started with PID $daemon_pid"
+	else
+		log "Warning: Could not determine daemon PID"
+	fi
 
 	exit 0
 
@@ -1213,8 +1228,11 @@ if [[ "$action" == "create_daemon" ]]; then
 
 	fi
 
-	# enable daemon
-	launchctl enable "gui/$(id -u $USER)/com.battery.app"
+	# Enable daemon to run at login
+	launchd_label="gui/$(id -u $USER)/com.battery.app"
+	launchctl enable "$launchd_label" 2>/dev/null
+
+	log "Daemon plist created/updated at $daemon_path"
 	exit 0
 
 fi
@@ -1222,8 +1240,16 @@ fi
 # Disable daemon
 if [[ "$action" == "disable_daemon" ]]; then
 
-	log "Disabling daemon at gui/$(id -u $USER)/com.battery.app"
-	launchctl disable "gui/$(id -u $USER)/com.battery.app"
+	launchd_label="gui/$(id -u $USER)/com.battery.app"
+	log "Disabling daemon at $launchd_label"
+
+	# Bootout if loaded
+	if launchctl list | grep -q "com.battery.app"; then
+		launchctl bootout "$launchd_label" 2>/dev/null || launchctl unload "$daemon_path" 2>/dev/null
+	fi
+
+	# Disable from auto-starting
+	launchctl disable "$launchd_label" 2>/dev/null
 	exit 0
 
 fi
@@ -1231,7 +1257,16 @@ fi
 # Remove daemon
 if [[ "$action" == "remove_daemon" ]]; then
 
+	launchd_label="gui/$(id -u $USER)/com.battery.app"
+
+	# Bootout if loaded
+	if launchctl list | grep -q "com.battery.app"; then
+		launchctl bootout "$launchd_label" 2>/dev/null || launchctl unload "$daemon_path" 2>/dev/null
+	fi
+
+	# Remove plist file
 	rm $daemon_path 2>/dev/null
+	log "Daemon removed"
 	exit 0
 
 fi

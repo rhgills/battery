@@ -17,13 +17,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - `status` - Check installation and daemon status
   - `test` - Run local version without installing
 - **Daemon metadata tracking**: Daemon now writes version, PID, start time, and script mtime to `~/.battery/daemon.metadata` for monitoring
-- **Process name in Activity Monitor**: Scripts now show as "battery" instead of "bash" using `exec -a`
 
 ### Fixed
 - **Critical SMC write bug**: Fixed `write_smc_labeled()` using `-l` (list) instead of `-w` (write), which caused SMC data dumps during daemon operations
 - **"recover%" logging bug**: `battery maintain recover` now logs the actual recovered percentage (e.g., "80%") instead of the literal string "recover%"
+- **PID parsing bug**: Fixed launchctl output parsing that included trailing semicolon in PID, causing status checks to fail
 
 ### Changed
+- **Major daemon architecture refactor**: Migrated from `nohup` to native macOS `launchd` management
+  - Daemon now properly managed by launchd (appears as PPID=1 in process tree)
+  - Uses `launchctl bootstrap/kickstart` to start daemon instead of background process spawning
+  - Uses `launchctl bootout` to stop daemon cleanly
+  - Provides better macOS integration and follows platform conventions
+  - Daemon remains independent of shell session (no longer uses nohup)
 - **Daemon status detection**: `dev.sh status` now shows detailed daemon information including version, uptime, and staleness warnings
 - **Automatic daemon restart**: `dev.sh install` and `dev.sh link` now intelligently handle running daemons
 
