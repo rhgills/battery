@@ -857,10 +857,22 @@ if [[ "$action" == "maintain_synchronous" ]]; then
 		fi
 	fi
 
-	# Parse setting - could be single value or range
-	local lower_bound=""
-	local upper_bound=""
-	local is_range=false
+	# Write daemon metadata for version tracking and monitoring
+	daemon_metadata_file="$configfolder/daemon.metadata"
+	if command -v jq >/dev/null 2>&1; then
+		cat > "$daemon_metadata_file" <<EOF
+{
+  "version": "$BATTERY_CLI_VERSION",
+  "pid": $$,
+  "start_time": $(date +%s),
+  "start_date": "$(date)",
+  "script_mtime": $(stat -f %m "$0" 2>/dev/null || echo "0")
+}
+EOF
+		log "Wrote daemon metadata: version=$BATTERY_CLI_VERSION, pid=$$"
+	else
+		log "jq not found - skipping metadata (install: brew install jq)"
+	fi
 
 	if valid_percentage_range "$setting"; then
 		# Range format: lower-upper
@@ -939,7 +951,6 @@ if [[ "$action" == "maintain_voltage_synchronous" ]]; then
 	if [[ "$setting" == "recover" ]]; then
 
 		# Before doing anything, log out environment details as a debugging trail
-		log "Debug trail. User: $USER, config folder: $configfolder, logfile: $logfile, file called with 1: $1, 2: $2"
 
 		maintain_voltage=$(cat $maintain_voltage_tracker_file 2>/dev/null)
 		if [[ $maintain_voltage ]]; then
@@ -952,6 +963,25 @@ if [[ "$action" == "maintain_voltage_synchronous" ]]; then
 		fi
 	fi
 
+=======
+	# Write daemon metadata for version tracking and monitoring
+	daemon_metadata_file="$configfolder/daemon.metadata"
+	if command -v jq >/dev/null 2>&1; then
+		cat > "$daemon_metadata_file" <<EOF
+{
+  "version": "$BATTERY_CLI_VERSION",
+  "pid": $$,
+  "start_time": $(date +%s),
+  "start_date": "$(date)",
+  "script_mtime": $(stat -f %m "$0" 2>/dev/null || echo "0")
+}
+EOF
+		log "Wrote daemon metadata: version=$BATTERY_CLI_VERSION, pid=$$"
+	else
+		log "jq not found - skipping metadata (install: brew install jq)"
+	fi
+
+>>>>>>> 5613889 (fix: quote start_date in daemon.metadata to prevent sourcing errors)
 	voltage=$(get_voltage)
 	lower_voltage=$(echo "$setting - $subsetting" | bc -l)
 	upper_voltage=$(echo "$setting + $subsetting" | bc -l)
@@ -997,7 +1027,16 @@ if [[ "$action" == "maintain" ]]; then
 	fi
 
 	if [[ "$setting" == "stop" ]]; then
-		log "Killing running maintain daemons & enabling charging as default state"
+		log "Stopping maintain daemon & enabling charging as default state"
+
+		# Stop via launchctl
+		launchd_label="gui/$(id -u $USER)/com.battery.app"
+		if launchctl list | grep -q "com.battery.app"; then
+			log "Stopping daemon via launchctl"
+			launchctl bootout "$launchd_label" 2>/dev/null || launchctl unload "$daemon_path" 2>/dev/null
+		fi
+
+		# Clean up
 		rm $pidfile 2>/dev/null
 		$battery_binary disable_daemon
 		enable_charging
@@ -1038,46 +1077,78 @@ if [[ "$action" == "maintain" ]]; then
 
 	fi
 
-	# Start maintenance script
+	# Resolve and log the settings
 	if [ "$is_voltage" = true ]; then
-		log "Starting battery maintenance at ${setting}V ±${subsetting}V"
-		nohup $battery_binary maintain_voltage_synchronous $setting $subsetting >>$logfile &
+		if [[ "$setting" == "recover" ]]; then
+			maintain_voltage=$(cat $maintain_voltage_tracker_file 2>/dev/null)
+			if [[ $maintain_voltage ]]; then
+				recovered_setting=$(echo $maintain_voltage | awk '{print $1}')
+				recovered_subsetting=$(echo $maintain_voltage | awk '{print $2}')
+				log "Starting battery maintenance at ${recovered_setting}V ±${recovered_subsetting}V (recovered)"
+			else
+				log "Starting battery maintenance (recovering voltage settings)"
+			fi
+		else
+			log "Starting battery maintenance at ${setting}V ±${subsetting}V"
+		fi
 	else
-		if valid_percentage_range "$setting"; then
+		if [[ "$setting" == "recover" ]]; then
+			maintain_percentage=$(cat $maintain_percentage_tracker_file 2>/dev/null)
+			if [[ $maintain_percentage ]]; then
+				log "Starting battery maintenance at $maintain_percentage% (recovered)"
+			else
+				log "Starting battery maintenance (recovering percentage settings)"
+			fi
+		elif valid_percentage_range "$setting"; then
 			log "Starting battery maintenance between ${setting/-/% and }%"
 		else
 			log "Starting battery maintenance at $setting% $subsetting"
 		fi
-		nohup $battery_binary maintain_synchronous $setting $subsetting >>$logfile &
 	fi
 
-	# Store pid of maintenance process and setting
-	echo $! >$pidfile
-	pid=$(cat "$pidfile" 2>/dev/null)
-
+	# Save settings to tracker files (unless recovering)
 	if ! [[ "$setting" == "recover" ]]; then
-
-		rm "$maintain_percentage_tracker_file" "$maintain_voltage_tracker_file" 2>/dev/null
-
 		if [[ "$is_voltage" = true ]]; then
-			log "Writing new setting $setting $subsetting to $maintain_voltage_tracker_file"
+			rm "$maintain_percentage_tracker_file" 2>/dev/null
 			echo "$setting $subsetting" >$maintain_voltage_tracker_file
-			log "Maintaining battery at ${setting}V ±${subsetting}V"
-
+			log "Saved voltage settings: ${setting}V ±${subsetting}V"
 		else
-			log "Writing new setting $setting to $maintain_percentage_tracker_file"
+			rm "$maintain_voltage_tracker_file" 2>/dev/null
 			echo $setting >$maintain_percentage_tracker_file
 			if valid_percentage_range "$setting"; then
-				log "Maintaining battery between ${setting/-/% and }%"
+				log "Saved percentage range: ${setting/-/% to }%"
 			else
-				log "Maintaining battery at $setting%"
+				log "Saved percentage setting: $setting%"
 			fi
 		fi
-
 	fi
 
-	# Enable the daemon that continues maintaining after reboot
+	# Create/update and start the daemon via launchd
 	$battery_binary create_daemon
+
+	# Start daemon via launchctl
+	launchd_label="gui/$(id -u $USER)/com.battery.app"
+
+	# Check if already loaded
+	if launchctl list | grep -q "com.battery.app"; then
+		log "Restarting daemon via launchctl"
+		launchctl kickstart -k "$launchd_label" 2>/dev/null
+	else
+		log "Starting daemon via launchctl"
+		launchctl bootstrap "$launchd_label" "$daemon_path" 2>/dev/null || launchctl load "$daemon_path" 2>/dev/null
+	fi
+
+	# Wait a moment for daemon to start and write PID
+	sleep 1
+
+	# Get PID from launchctl (strip trailing semicolon)
+	daemon_pid=$(launchctl list com.battery.app 2>/dev/null | awk '/PID/ {print $NF}' | tr -d ';')
+	if [[ -n "$daemon_pid" && "$daemon_pid" != "-" ]]; then
+		echo $daemon_pid > $pidfile
+		log "Daemon started with PID $daemon_pid"
+	else
+		log "Warning: Could not determine daemon PID"
+	fi
 
 	exit 0
 
@@ -1146,6 +1217,7 @@ if [[ "$action" == "status" ]]; then
 
 	log "Battery at $(get_battery_percentage)% ($(get_remaining_time) remaining), $(get_voltage)V, smc charging $(get_smc_charging_status)"
 	if test -f $pidfile; then
+		pid=$(cat $pidfile 2>/dev/null)
 		maintain_percentage=$(cat $maintain_percentage_tracker_file 2>/dev/null)
 		if [[ $maintain_percentage ]]; then
 			if valid_percentage_range "$maintain_percentage"; then
@@ -1158,6 +1230,28 @@ if [[ "$action" == "status" ]]; then
 			maintain_level=$(echo "$maintain_level" | awk '{print $1 "V ±" $2 "V"}')
 		fi
 		log "Your battery is currently being maintained at $maintain_level"
+
+		# Show basic daemon info
+		daemon_metadata_file="$configfolder/daemon.metadata"
+		if command -v jq >/dev/null 2>&1 && [[ -f "$daemon_metadata_file" ]]; then
+			version=$(jq -r '.version // ""' "$daemon_metadata_file" 2>/dev/null)
+			start_time=$(jq -r '.start_time // ""' "$daemon_metadata_file" 2>/dev/null)
+			uptime_str=""
+			if [[ -n "$start_time" ]]; then
+				current_time=$(date +%s)
+				elapsed=$((current_time - start_time))
+				hours=$((elapsed / 3600))
+				minutes=$(((elapsed % 3600) / 60))
+				if [[ $hours -gt 0 ]]; then
+					uptime_str="${hours}h ${minutes}m"
+				else
+					uptime_str="${minutes}m"
+				fi
+			fi
+			log "Daemon: running (${version:-unknown}, uptime ${uptime_str:-unknown})"
+		else
+			log "Daemon: running (PID $pid)"
+		fi
 	fi
 	exit 0
 
@@ -1225,8 +1319,11 @@ if [[ "$action" == "create_daemon" ]]; then
 
 	fi
 
-	# enable daemon
-	launchctl enable "gui/$(id -u $USER)/com.battery.app"
+	# Enable daemon to run at login
+	launchd_label="gui/$(id -u $USER)/com.battery.app"
+	launchctl enable "$launchd_label" 2>/dev/null
+
+	log "Daemon plist created/updated at $daemon_path"
 	exit 0
 
 fi
@@ -1234,8 +1331,16 @@ fi
 # Disable daemon
 if [[ "$action" == "disable_daemon" ]]; then
 
-	log "Disabling daemon at gui/$(id -u $USER)/com.battery.app"
-	launchctl disable "gui/$(id -u $USER)/com.battery.app"
+	launchd_label="gui/$(id -u $USER)/com.battery.app"
+	log "Disabling daemon at $launchd_label"
+
+	# Bootout if loaded
+	if launchctl list | grep -q "com.battery.app"; then
+		launchctl bootout "$launchd_label" 2>/dev/null || launchctl unload "$daemon_path" 2>/dev/null
+	fi
+
+	# Disable from auto-starting
+	launchctl disable "$launchd_label" 2>/dev/null
 	exit 0
 
 fi
@@ -1243,7 +1348,16 @@ fi
 # Remove daemon
 if [[ "$action" == "remove_daemon" ]]; then
 
+	launchd_label="gui/$(id -u $USER)/com.battery.app"
+
+	# Bootout if loaded
+	if launchctl list | grep -q "com.battery.app"; then
+		launchctl bootout "$launchd_label" 2>/dev/null || launchctl unload "$daemon_path" 2>/dev/null
+	fi
+
+	# Remove plist file
 	rm $daemon_path 2>/dev/null
+	log "Daemon removed"
 	exit 0
 
 fi
