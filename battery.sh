@@ -304,11 +304,26 @@ function change_magsafe_led_color() {
 }
 
 function enable_discharging() {
+	# IMPORTANT: This function forces the Mac to use battery power EVEN WHEN AC ADAPTER IS CONNECTED
+	#
+	# Normal behavior: When AC adapter is plugged in, Mac uses AC power and battery doesn't discharge
+	# This function changes that: Forces Mac to use battery power and discharge despite AC being connected
+	#
+	# Use cases:
+	# - Intentionally draining battery to a lower percentage (e.g., battery discharge 80)
+	# - Testing battery drain scenarios
+	# - The "battery adapter on" command uses this
+	#
+	# NOTE: This ONLY affects behavior when AC adapter is connected. If unplugged, battery
+	# discharges normally regardless of this setting.
+	#
+	# See: https://github.com/actuallymentor/battery/issues/20#issuecomment-1364540704
+
 	log "🔽🪫 Enabling battery discharging"
 
 	disable_charging
 
-	# Re:discharging, we're using keys uncovered by @howie65: https://github.com/actuallymentor/battery/issues/20#issuecomment-1364540704
+	# Re:discharging, we're using keys uncovered by @howie65
 	# Priority: CHIE > CH0J > CH0I
 	if [[ "$smc_supports_adapter_chie" == "true" ]]; then
 		smc_write_hex CHIE 08
@@ -323,6 +338,24 @@ function enable_discharging() {
 }
 
 function disable_discharging() {
+	# IMPORTANT: This function restores normal Mac behavior: USE AC POWER WHEN ADAPTER IS CONNECTED
+	#
+	# Normal behavior: When AC adapter is plugged in, Mac uses AC power (battery doesn't discharge)
+	# This function ensures that normal behavior is active (counterpart to enable_discharging)
+	#
+	# Confusing name clarification:
+	# - "disable_discharging" sounds like "stop the battery from discharging"
+	# - What it really means: "disable FORCED discharging mode" = "allow AC passthrough"
+	# - Result: When AC is connected, Mac uses AC power (battery idle/maintaining)
+	#
+	# Use cases:
+	# - Returning to normal state after using "battery discharge" command
+	# - The "battery adapter off" command uses this
+	# - Called by enable_charging() to ensure AC power is used
+	#
+	# NOTE: This ONLY affects behavior when AC adapter is connected. If unplugged, battery
+	# discharges normally regardless of this setting.
+
 	log "🔼🪫 Disabling battery discharging"
 
 	# Disable discharging - Priority: CHIE > CH0J > CH0I
@@ -364,6 +397,24 @@ function disable_discharging() {
 
 	sleep 1
 	battery_percentage=$(get_battery_percentage)
+}
+
+# Clear, descriptive wrapper functions for better code readability
+# These call the underlying enable/disable_discharging functions
+# but with names that better express intent
+
+function force_battery_discharge() {
+	# Forces Mac to use battery power even when AC adapter is connected
+	# Use case: Intentionally drain battery (e.g., battery discharge 80)
+	# Result: Battery discharges despite being plugged into AC power
+	enable_discharging
+}
+
+function allow_ac_passthrough() {
+	# Allows Mac to use AC power when adapter is connected (normal behavior)
+	# Disables forced battery discharge mode
+	# Result: When plugged in, Mac uses AC power and battery doesn't discharge
+	disable_discharging
 }
 
 function enable_charging() {
@@ -751,7 +802,7 @@ if [[ "$action" == "uninstall" ]]; then
 		read
 	fi
 	enable_charging
-	disable_discharging
+	allow_ac_passthrough
 	$battery_binary remove_daemon
 	sudo rm -v "$binfolder/smc" "$binfolder/battery" $visudo_file
 	sudo rm -v -r "$configfolder"
@@ -791,9 +842,9 @@ if [[ "$action" == "adapter" ]]; then
 
 	# Set charging to on and off
 	if [[ "$setting" == "on" ]]; then
-		enable_discharging
+		force_battery_discharge
 	elif [[ "$setting" == "off" ]]; then
-		disable_discharging
+		allow_ac_passthrough
 	else
 		log "Error: $setting is not \"on\" or \"off\"."
 		exit 1
@@ -851,7 +902,7 @@ if [[ "$action" == "discharge" ]]; then
 	# Start charging
 	battery_percentage=$(get_battery_percentage)
 	log "Discharging to $setting% from $battery_percentage%"
-	enable_discharging
+	force_battery_discharge
 
 	# Loop until battery percent is exceeded
 	while [[ "$battery_percentage" -gt "$setting" ]]; do
@@ -862,7 +913,7 @@ if [[ "$action" == "discharge" ]]; then
 
 	done
 
-	disable_discharging
+	allow_ac_passthrough
 	log "Discharging completed at $battery_percentage%"
 
 fi
