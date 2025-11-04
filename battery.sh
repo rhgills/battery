@@ -498,6 +498,8 @@ function get_smc_charging_status() {
 }
 
 function get_smc_discharging_status() {
+	# Returns the status of forced discharge mode (using battery despite AC connection)
+	# Returns: "enabled" (forced), "disabled" (normal), or "unknown"
 	# Priority: CHIE > CH0J > CH0I
 	local status_key="CH0I"
 	if [[ "$smc_supports_adapter_chie" == "true" ]]; then
@@ -511,9 +513,9 @@ function get_smc_discharging_status() {
 		return
 	fi
 	if [[ "$hex_status" == "0" || "$hex_status" == "00" ]]; then
-		echo "not discharging"
+		echo "disabled"  # Normal behavior: use AC when connected
 	else
-		echo "discharging"
+		echo "enabled"   # Forced discharge: use battery despite AC
 	fi
 }
 
@@ -631,7 +633,7 @@ if [[ "$action" == "info" ]]; then
 	our_state="unknown"
 	if [[ "$charging_status" == "enabled" ]]; then
 		our_state="charging"
-	elif [[ "$discharging_status" == "discharging" ]]; then
+	elif [[ "$discharging_status" == "enabled" ]]; then
 		our_state="discharging"
 	fi
 
@@ -1340,7 +1342,7 @@ if [[ "$action" == "status" ]]; then
 					log "  State: ${diff}% above target"
 					log "  • Charging: disabled (preventing further charge)"
 
-					if [[ "$discharging_status" == "discharging" ]]; then
+					if [[ "$discharging_status" == "enabled" ]]; then
 						log "  • Actively discharging to target (using battery power)"
 					elif [[ "$ac_attached" == "1" ]]; then
 						log "  • Using AC power (not discharging)"
@@ -1372,9 +1374,9 @@ if [[ "$action" == "status" ]]; then
 						log "  • Charging: disabled (at/above target)"
 					fi
 
-					if [[ "$ac_attached" == "1" && "$discharging_status" != "discharging" ]]; then
+					if [[ "$ac_attached" == "1" && "$discharging_status" != "enabled" ]]; then
 						log "  • Using AC power (battery maintaining)"
-					elif [[ "$discharging_status" == "discharging" ]]; then
+					elif [[ "$discharging_status" == "enabled" ]]; then
 						log "  • Actively discharging (using battery power)"
 					fi
 				fi
@@ -1648,9 +1650,9 @@ if [[ "$action" == "debug" ]]; then
 
 	if [[ "$charging_status" == "enabled" ]]; then
 		our_state="charging"
-	elif [[ "$discharging_status" == "discharging" ]]; then
+	elif [[ "$discharging_status" == "enabled" ]]; then
 		our_state="discharging"
-	elif [[ "$charging_status" == "disabled" && "$discharging_status" != "discharging" && "$ac_attached" == "1" ]]; then
+	elif [[ "$charging_status" == "disabled" && "$discharging_status" != "enabled" && "$ac_attached" == "1" ]]; then
 		our_state="maintaining"  # Charging off, not discharging, on AC = maintaining
 	elif [[ "$charging_status" == "disabled" ]]; then
 		our_state="charged"      # Charging off, not on AC = fully charged
@@ -1726,9 +1728,9 @@ if [[ "$action" == "doctor" ]]; then
 
 	if [[ "$charging_status" == "enabled" ]]; then
 		our_state="charging"
-	elif [[ "$discharging_status" == "discharging" ]]; then
+	elif [[ "$discharging_status" == "enabled" ]]; then
 		our_state="discharging"
-	elif [[ "$charging_status" == "disabled" && "$discharging_status" != "discharging" && "$ac_attached" == "1" ]]; then
+	elif [[ "$charging_status" == "disabled" && "$discharging_status" != "enabled" && "$ac_attached" == "1" ]]; then
 		our_state="maintaining"  # Charging off, not discharging, on AC = maintaining
 	elif [[ "$charging_status" == "disabled" ]]; then
 		our_state="charged"      # Charging off, not on AC = fully charged
