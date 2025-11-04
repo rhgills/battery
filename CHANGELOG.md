@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [v1.3.3-rhgills-development] - 2025-11-03
+
+### Added
+- **Granular logs command**: `battery logs` now supports `cli`, `gui`, and `all` subcommands for better control
+  - `battery logs` or `battery logs cli` - Shows only CLI logs (cleaner default output)
+  - `battery logs gui` - Shows only GUI logs
+  - `battery logs all` - Shows both logs + config folder + battery status (previous default behavior)
+  - Line count parameter works with all variants: `battery logs cli 50`, `battery logs all 200`
+  - Maintains backwards compatibility: `battery logs 100` still works as expected
+
 ## [v1.3.2-rhgills-development] - 2025-11-03
 
 ### Added

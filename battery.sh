@@ -10,7 +10,7 @@ fi
 ## Update management
 ## variables are used by this binary as well at the update script
 ## ###############
-BATTERY_CLI_VERSION="v1.3.2-rhgills-development"
+BATTERY_CLI_VERSION="v1.3.3-rhgills-development"
 
 # Path fixes for unexpected environments
 PATH=/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
@@ -67,9 +67,14 @@ Usage:
   battery info
     show detailed system information (version, daemon status, configuration)
 
-  battery logs LINES[integer, optional]
-    output logs of the battery CLI and GUI
-	eg: battery logs 100
+  battery logs [cli|gui|all] [LINES]
+    output logs of the battery CLI and/or GUI
+    - battery logs       (CLI logs, last 100 lines)
+    - battery logs cli   (CLI logs, last 100 lines)
+    - battery logs gui   (GUI logs, last 100 lines)
+    - battery logs all   (both logs + config + status)
+    - battery logs cli 50  (CLI logs, last 50 lines)
+    - battery logs all 200 (everything, last 200 lines)
 
   battery debug
     cross-check battery state between SMC and system (pmset), show raw SMC values
@@ -1526,20 +1531,47 @@ fi
 # Display logs
 if [[ "$action" == "logs" ]]; then
 
-	amount="${2:-100}"
+	# Parse subcommand and line count
+	subcommand="${2:-cli}"  # default to 'cli'
 
-	echo -e "👾 Battery CLI logs:\n"
-	tail -n $amount $logfile
+	# Check if $2 is a number (backwards compatibility)
+	if [[ "$2" =~ ^[0-9]+$ ]]; then
+		subcommand="cli"
+		amount="$2"
+	elif [[ "$2" == "cli" ]] || [[ "$2" == "gui" ]] || [[ "$2" == "all" ]]; then
+		subcommand="$2"
+		amount="${3:-100}"
+	else
+		# Default case: no valid subcommand or empty
+		subcommand="cli"
+		amount="${2:-100}"
+	fi
 
-	echo -e "\n🖥️	Battery GUI logs:\n"
-	tail -n $amount "$configfolder/gui.log"
+	# Display CLI logs
+	if [[ "$subcommand" == "cli" ]] || [[ "$subcommand" == "all" ]]; then
+		echo -e "👾 Battery CLI logs:\n"
+		tail -n $amount $logfile
+	fi
 
-	echo -e "\n📁 Config folder details:\n"
-	ls -lah $configfolder
+	# Display GUI logs
+	if [[ "$subcommand" == "gui" ]] || [[ "$subcommand" == "all" ]]; then
+		if [[ "$subcommand" == "all" ]]; then
+			echo -e "\n🖥️	Battery GUI logs:\n"
+		else
+			echo -e "🖥️	Battery GUI logs:\n"
+		fi
+		tail -n $amount "$configfolder/gui.log"
+	fi
 
-	echo -e "\n⚙️	Battery data:\n"
-	$battery_binary status
-	$battery_binary | grep -E "v\d.*"
+	# Only show config folder and battery data for 'all'
+	if [[ "$subcommand" == "all" ]]; then
+		echo -e "\n📁 Config folder details:\n"
+		ls -lah $configfolder
+
+		echo -e "\n⚙️	Battery data:\n"
+		$battery_binary status
+		$battery_binary | grep -E "v\d.*"
+	fi
 
 	exit 0
 
