@@ -612,7 +612,8 @@ if [[ "$action" == "info" ]]; then
 	charging_status=$(get_smc_charging_status)
 	discharging_status=$(get_smc_discharging_status)
 	echo "  Charging:      $charging_status"
-	echo "  Discharging:   $discharging_status"
+	echo "  Forced Discharge: $discharging_status"
+	echo "                 (Forces battery use even when AC connected)"
 	echo ""
 
 	# Add pmset cross-check
@@ -1556,9 +1557,12 @@ if [[ "$action" == "debug" ]]; then
 	voltage=$(get_voltage)
 
 	echo "  Charging:     $charging_status"
-	echo "  Discharging:  $discharging_status"
+	echo "  Forced Discharge: $discharging_status"
 	echo "  Battery:      $battery_pct%"
 	echo "  Voltage:      ${voltage}V"
+	echo ""
+	echo "  Note: 'Forced Discharge' only applies when AC is connected."
+	echo "        It forces Mac to use battery power despite being plugged in."
 
 	# Get raw SMC values using internal function
 	echo ""
