@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [v1.3.2-rhgills-development] - 2025-11-03
 
+### Added
+- **`sudo_smc()` wrapper function**: All sudo smc calls now go through a labeled wrapper that logs the reason for sudo invocations
+  - Provides context like "🔐 sudo smc: Write 08 to SMC key CHIE"
+  - Only logs writes and debug mode to reduce noise
+  - Makes debugging permission issues much easier
+- **visudo test command array**: New `visudo_test_commands` array defines specific SMC commands to test for passwordless access
+  - Tests one representative command from each permission group
+  - Makes it easy to add new tests as the visudo config evolves
+- **Enhanced state detection**: `battery doctor` and `battery debug` now recognize "maintaining" and "charged" states
+  - "maintaining": Charging disabled, using AC power, battery not draining (target maintenance state)
+  - "charged": Battery fully charged or at target, charging disabled
+  - Previously showed confusing "unknown" state during normal maintenance
+  - Cross-check now correctly identifies when maintenance is active and working
+
+### Fixed
+- **False positive visudo warning**: `battery doctor` no longer incorrectly reports "SMC requires password"
+  - Previously tested `smc -l` which isn't whitelisted in visudo
+  - Now tests actual SMC read commands that are used by the tool (CH0B, CHTE, CH0I, CH0J, CHIE, ACLC, BCLM)
+  - Shows specifically which commands fail if visudo is misconfigured
+- **pmset state parsing bug**: Fixed grep matching multiple states (e.g., "AC attached" + "charging" on separate lines)
+  - Added "not charging" to recognized states
+  - Added `head -1` to only capture first match
+  - Reordered pattern to prioritize specific states over generic ones
+- **Permission denied on `battery` commands**: Fixed missing execute permissions on battery.sh after rebase
+  - Added `chmod +x battery.sh`
+  - All commands now work without "Permission denied" errors
+
 ### Changed
 - **Code clarity refactoring**: Added clear wrapper functions and extensive documentation for discharging control
   - Created self-documenting wrapper functions: `force_battery_discharge()` and `allow_ac_passthrough()`
@@ -13,6 +40,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - Updated callsites throughout codebase to use clearer function names
   - Root functions remain unchanged to minimize drift from upstream for easier merges
   - Maintains full backward compatibility while dramatically improving code readability
+- **Improved visudo configuration**: Added `SMCREAD` alias with read-only SMC commands for capability detection
 
 ## [v1.3.1-rhgills-development] - 2025-11-03
 

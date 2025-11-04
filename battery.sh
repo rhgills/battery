@@ -149,6 +149,18 @@ ALL ALL = NOPASSWD: CH0J
 ALL ALL = NOPASSWD: SMCREAD
 "
 
+# Test commands for visudo verification (read-only, safe to run)
+# Format: "command:description"
+declare -a visudo_test_commands=(
+	"smc -k CH0B -r:Legacy charging control (CH0B)"
+	"smc -k CHTE -r:Tahoe charging (CHTE)"
+	"smc -k CH0I -r:Legacy discharging (CH0I)"
+	"smc -k CH0J -r:Adapter control (CH0J)"
+	"smc -k CHIE -r:Tahoe adapter (CHIE)"
+	"smc -k ACLC -r:MagSafe LED control"
+	"smc -k BCLM -r:Intel charge limit"
+)
+
 # Get parameters
 battery_binary=$0
 action=$1
@@ -607,7 +619,7 @@ if [[ "$action" == "info" ]]; then
 	echo "System View (pmset):"
 	pmset_output=$(pmset -g batt)
 	power_source=$(echo "$pmset_output" | head -1 | grep -o "'[^']*'" | tr -d "'")
-	pmset_state=$(echo "$pmset_output" | grep InternalBattery | grep -o "charging\|discharging\|charged\|finishing charge\|AC attached" || echo "unknown")
+	pmset_state=$(echo "$pmset_output" | grep InternalBattery | grep -o "not charging\|finishing charge\|AC attached\|discharging\|charging\|charged" | head -1 || echo "unknown")
 	pmset_pct=$(echo "$pmset_output" | grep InternalBattery | grep -o "[0-9]*%" | tr -d '%')
 
 	echo "  Power Source:  $power_source"
@@ -1623,15 +1635,21 @@ if [[ "$action" == "debug" ]]; then
 	# Parse pmset for cross-check
 	echo ""
 	power_source=$(echo "$pmset_output" | head -1 | grep -o "'[^']*'" | tr -d "'")
-	pmset_state=$(echo "$pmset_output" | grep InternalBattery | grep -o "charging\|discharging\|charged\|finishing charge\|AC attached" || echo "unknown")
+	pmset_state=$(echo "$pmset_output" | grep InternalBattery | grep -o "not charging\|finishing charge\|AC attached\|discharging\|charging\|charged" | head -1 || echo "unknown")
 	pmset_pct=$(echo "$pmset_output" | grep InternalBattery | grep -o "[0-9]*%" | tr -d '%')
 
 	# Cross-check logic
+	ac_attached=$(get_charger_state)
 	our_state="unknown"
+
 	if [[ "$charging_status" == "enabled" ]]; then
 		our_state="charging"
 	elif [[ "$discharging_status" == "discharging" ]]; then
 		our_state="discharging"
+	elif [[ "$charging_status" == "disabled" && "$discharging_status" != "discharging" && "$ac_attached" == "1" ]]; then
+		our_state="maintaining"  # Charging off, not discharging, on AC = maintaining
+	elif [[ "$charging_status" == "disabled" ]]; then
+		our_state="charged"      # Charging off, not on AC = fully charged
 	fi
 
 	# Determine match status
@@ -1644,6 +1662,9 @@ if [[ "$action" == "debug" ]]; then
 	elif [[ "$our_state" == "$pmset_state" ]]; then
 		match_icon="✅"
 		match_msg="States match"
+	elif [[ ("$our_state" == "maintaining" || "$our_state" == "charged") && ("$pmset_state" == "charged" || "$pmset_state" == "finishing charge" || "$pmset_state" == "not charging" || "$pmset_state" == "AC attached") ]]; then
+		match_icon="✅"
+		match_msg="States match (SMC: $our_state, pmset: $pmset_state) - maintenance active"
 	else
 		match_icon="⚠️"
 		match_msg="States differ (expected with maintain active)"
@@ -1696,15 +1717,21 @@ if [[ "$action" == "doctor" ]]; then
 	echo "3. Comparing battery states..."
 	charging_status=$(get_smc_charging_status)
 	discharging_status=$(get_smc_discharging_status)
+	ac_attached=$(get_charger_state)
 	our_state="unknown"
+
 	if [[ "$charging_status" == "enabled" ]]; then
 		our_state="charging"
 	elif [[ "$discharging_status" == "discharging" ]]; then
 		our_state="discharging"
+	elif [[ "$charging_status" == "disabled" && "$discharging_status" != "discharging" && "$ac_attached" == "1" ]]; then
+		our_state="maintaining"  # Charging off, not discharging, on AC = maintaining
+	elif [[ "$charging_status" == "disabled" ]]; then
+		our_state="charged"      # Charging off, not on AC = fully charged
 	fi
 
 	pmset_output=$(pmset -g batt 2>/dev/null)
-	pmset_state=$(echo "$pmset_output" | grep InternalBattery | grep -o "charging\|discharging\|charged\|finishing charge\|AC attached" || echo "unknown")
+	pmset_state=$(echo "$pmset_output" | grep InternalBattery | grep -o "not charging\|finishing charge\|AC attached\|discharging\|charging\|charged" | head -1 || echo "unknown")
 
 	echo "   SMC state:    $our_state"
 	echo "   pmset state:  $pmset_state"
@@ -1718,6 +1745,9 @@ if [[ "$action" == "doctor" ]]; then
 		echo "      This may indicate an issue with SMC access"
 	elif [[ "$our_state" == "$pmset_state" ]]; then
 		echo "   ✅ States match"
+	elif [[ ("$our_state" == "maintaining" || "$our_state" == "charged") && ("$pmset_state" == "charged" || "$pmset_state" == "finishing charge" || "$pmset_state" == "not charging" || "$pmset_state" == "AC attached") ]]; then
+		echo "   ✅ States match (SMC: $our_state, pmset: $pmset_state)"
+		echo "      Battery maintenance is active and working correctly"
 	else
 		echo "   ⚠️  MISMATCH detected"
 		echo "      This may indicate SMC control is active (expected with maintain)"
@@ -1783,11 +1813,27 @@ if [[ "$action" == "doctor" ]]; then
 
 	# 6. Check sudoers configuration
 	echo "6. Checking sudoers configuration..."
-	if sudo -n smc -l >/dev/null 2>&1; then
-		echo "   ✅ SMC sudo access configured"
+	visudo_ok=true
+	failed_commands=()
+
+	for test_cmd_entry in "${visudo_test_commands[@]}"; do
+		cmd="${test_cmd_entry%%:*}"
+		label="${test_cmd_entry##*:}"
+
+		if ! sudo -n $cmd >/dev/null 2>&1; then
+			visudo_ok=false
+			failed_commands+=("$label")
+		fi
+	done
+
+	if [[ "$visudo_ok" == "true" ]]; then
+		echo "   ✅ All SMC commands work without password"
 	else
-		echo "   ⚠️  SMC requires password (visudo not configured)"
-		echo "      Run: battery visudo"
+		echo "   ⚠️  Some SMC commands require password:"
+		for failed in "${failed_commands[@]}"; do
+			echo "      - $failed"
+		done
+		echo "   Run: battery visudo"
 	fi
 	echo ""
 
