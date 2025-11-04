@@ -1235,7 +1235,13 @@ fi
 # Status logger
 if [[ "$action" == "status" ]]; then
 
-	log "Battery at $(get_battery_percentage)% ($(get_remaining_time) remaining), $(get_voltage)V, smc charging $(get_smc_charging_status)"
+	battery_pct=$(get_battery_percentage)
+	charging_status=$(get_smc_charging_status)
+	discharging_status=$(get_smc_discharging_status)
+	ac_attached=$(get_charger_state)
+
+	log "Battery at ${battery_pct}% ($(get_remaining_time) remaining), $(get_voltage)V, smc charging $charging_status"
+
 	if test -f $pidfile; then
 		pid=$(cat $pidfile 2>/dev/null)
 
@@ -1245,16 +1251,73 @@ if [[ "$action" == "status" ]]; then
 			if [[ $maintain_percentage ]]; then
 				if valid_percentage_range "$maintain_percentage"; then
 					maintain_level="${maintain_percentage/-/% - }%"
+					lower_bound="${maintain_percentage%-*}"
+					upper_bound="${maintain_percentage#*-}"
 				else
 					maintain_level="$maintain_percentage%"
+					lower_bound="$maintain_percentage"
+					upper_bound="$maintain_percentage"
 				fi
 			else
 				maintain_level=$(cat $maintain_voltage_tracker_file 2>/dev/null)
 				maintain_level=$(echo "$maintain_level" | awk '{print $1 "V ±" $2 "V"}')
+				# For voltage maintenance, we don't show the detailed state analysis
+				lower_bound=""
 			fi
 			log "Your battery is currently being maintained at $maintain_level"
 
+			# Show detailed state analysis for percentage-based maintenance
+			if [[ -n "$lower_bound" ]]; then
+				log ""
+
+				# Determine relationship to target
+				if [[ "$battery_pct" -gt "$upper_bound" ]]; then
+					diff=$((battery_pct - upper_bound))
+					log "  State: ${diff}% above target"
+					log "  • Charging: disabled (preventing further charge)"
+
+					if [[ "$discharging_status" == "discharging" ]]; then
+						log "  • Actively discharging to target (using battery power)"
+					elif [[ "$ac_attached" == "1" ]]; then
+						log "  • Using AC power (not discharging)"
+						log "  ℹ️  Battery will discharge to ${upper_bound}% when unplugged"
+						log "     Or force discharge now: battery discharge ${upper_bound}"
+					else
+						log "  • Not plugged in - naturally discharging to target"
+					fi
+
+				elif [[ "$battery_pct" -lt "$lower_bound" ]]; then
+					diff=$((lower_bound - battery_pct))
+					log "  State: ${diff}% below target"
+
+					if [[ "$charging_status" == "enabled" ]]; then
+						log "  • Charging: enabled (charging to target)"
+						log "  • Will stop charging at ${upper_bound}%"
+					else
+						log "  • Charging: disabled (unexpected)"
+						log "  ⚠️  Should be charging but isn't - check AC connection"
+					fi
+
+				else
+					log "  State: ✅ Within target range"
+
+					if [[ "$charging_status" == "enabled" ]]; then
+						log "  • Charging: enabled"
+						log "  • Will stop charging at ${upper_bound}%"
+					else
+						log "  • Charging: disabled (at/above target)"
+					fi
+
+					if [[ "$ac_attached" == "1" && "$discharging_status" != "discharging" ]]; then
+						log "  • Using AC power (battery maintaining)"
+					elif [[ "$discharging_status" == "discharging" ]]; then
+						log "  • Actively discharging (using battery power)"
+					fi
+				fi
+			fi
+
 			# Show basic daemon info
+			log ""
 			daemon_metadata_file="$configfolder/daemon.metadata"
 			if command -v jq >/dev/null 2>&1 && [[ -f "$daemon_metadata_file" ]]; then
 				version=$(jq -r '.version // ""' "$daemon_metadata_file" 2>/dev/null)
@@ -1466,6 +1529,18 @@ if [[ "$action" == "debug" ]]; then
 
 		# Calculate and display power flow
 		if [[ -n "$voltage_mv" && -n "$amperage_ma" ]]; then
+			# ioreg returns amperage as unsigned 64-bit int. Negative values (discharging)
+			# are represented as very large numbers (two's complement).
+			# If value > 2^63, convert to signed by subtracting 2^64
+			# Use awk for the comparison and conversion since bash can't handle 64-bit ints
+			amperage_ma=$(awk -v amp="$amperage_ma" 'BEGIN {
+				if (amp > 9223372036854775807) {
+					printf "%.0f", amp - 18446744073709551616
+				} else {
+					printf "%.0f", amp
+				}
+			}')
+
 			voltage_v=$(awk "BEGIN {printf \"%.2f\", $voltage_mv / 1000}")
 			amperage_a=$(awk "BEGIN {printf \"%.2f\", $amperage_ma / 1000}")
 			power_w=$(awk "BEGIN {printf \"%.1f\", ($voltage_mv * $amperage_ma) / 1000000}")
@@ -1722,6 +1797,18 @@ if [[ "$action" == "doctor" ]]; then
 
 		# Calculate values
 		if [[ -n "$voltage_mv" && -n "$amperage_ma" ]]; then
+			# ioreg returns amperage as unsigned 64-bit int. Negative values (discharging)
+			# are represented as very large numbers (two's complement).
+			# If value > 2^63, convert to signed by subtracting 2^64
+			# Use awk for the comparison and conversion since bash can't handle 64-bit ints
+			amperage_ma=$(awk -v amp="$amperage_ma" 'BEGIN {
+				if (amp > 9223372036854775807) {
+					printf "%.0f", amp - 18446744073709551616
+				} else {
+					printf "%.0f", amp
+				}
+			}')
+
 			voltage_v=$(awk "BEGIN {printf \"%.2f\", $voltage_mv / 1000}")
 			amperage_a=$(awk "BEGIN {printf \"%.2f\", $amperage_ma / 1000}")
 			power_w=$(awk "BEGIN {printf \"%.1f\", ($voltage_mv * $amperage_ma) / 1000000}")
