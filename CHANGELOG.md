@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [v1.3.2-rhgills-development] - 2025-11-03
+
+### Changed
+- **Code clarity refactoring**: Added clear wrapper functions and extensive documentation for discharging control
+  - Created self-documenting wrapper functions: `force_battery_discharge()` and `allow_ac_passthrough()`
+  - Added extensive comments to `enable_discharging()` and `disable_discharging()` explaining they only affect behavior when AC adapter is connected
+  - Updated callsites throughout codebase to use clearer function names
+  - Root functions remain unchanged to minimize drift from upstream for easier merges
+  - Maintains full backward compatibility while dramatically improving code readability
+
 ## [v1.3.1-rhgills-development] - 2025-11-03
 
 ### Added
