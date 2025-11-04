@@ -4,6 +4,40 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [v1.3.1-rhgills-development] - 2025-11-03
+
+### Added
+- **Enhanced `battery status` output**: Now provides detailed state analysis explaining the relationship between current charge, maintenance target, and current state
+  - Shows exact difference from target (e.g., "20% above target")
+  - Explains current charging/discharging state with context
+  - Provides actionable suggestions (e.g., "battery discharge 80")
+  - Makes it easy to verify the tool is working correctly
+- **Hardware metrics in `battery debug`**: Added adapter wattage and power flow with direction indicators
+  - Shows real-time power flow with direction: (charging), (discharging), or (idle/maintaining)
+  - Helps validate inconsistencies between SMC, pmset, and hardware state
+- **Comprehensive hardware details in `battery doctor`**: Added Section 8 with detailed battery metrics from ioreg
+  - Adapter wattage
+  - Power flow (watts, amperage, voltage)
+  - Temperature
+  - Battery health with status indicators
+  - Cycle count with usage percentage
+  - Individual cell voltages
+- **Git tracking in `dev.sh status`**: When symlinked (dev mode), shows git commit SHA and dirty state warnings
+
+### Fixed
+- **Confusing log message during daemon stop**: Removed misleading "No valid maintain percentage set" message that appeared during daemon restart
+- **Power flow calculation bug**: Fixed two's complement overflow when parsing negative amperage values from ioreg during battery discharge
+  - Previously showed corrupted values like `231838679518381600.0W`
+  - Now correctly shows negative values like `-25.5W (-2.05A @ 12.46V)`
+
+### Changed
+- Power flow now includes direction indicators for clarity: (charging), (discharging), (idle/maintaining)
+
+## [v1.3.0-rhgills-development] - 2025-11-03
+
+### Changed
+- Rebased on upstream main to incorporate latest fixes and improvements from main repository
+
 ## [v1.2.9-rhgills-development] - 2025-11-03
 
 ### Added
