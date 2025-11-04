@@ -28,7 +28,9 @@ The CLI (`battery.sh`) is a standalone bash script. Test directly:
 ```bash
 ./battery.sh status            # Check battery status
 ./battery.sh maintain 80       # Set 80% limit (requires smc binary)
-./battery.sh logs 100          # View last 100 log lines
+./battery.sh logs              # View CLI logs (default: last 100 lines)
+./battery.sh logs gui 50       # View GUI logs (last 50 lines)
+./battery.sh logs all          # View all logs + config + status
 ```
 
 ### Installation Testing
@@ -36,6 +38,24 @@ The CLI (`battery.sh`) is a standalone bash script. Test directly:
 ./setup.sh                     # Install CLI + smc to /usr/local/bin
 ./update.sh                    # Update existing installation
 ```
+
+### Development Workflow (dev.sh)
+The `dev.sh` helper script streamlines development and testing:
+```bash
+./dev.sh link                  # Symlink for live development (instant testing)
+./dev.sh install               # Copy install (production mode)
+./dev.sh restart-daemon        # Reload daemon after code changes
+./dev.sh status                # Check installation type & daemon status
+./dev.sh test status           # Test local version without installing
+```
+
+**Development workflow:**
+1. `./dev.sh link` - Creates symlink at `/usr/local/bin/battery` → one-off commands are live
+2. Edit `battery.sh` and test instantly with `battery status`, `battery logs`, etc.
+3. `./dev.sh restart-daemon` - Restart daemon to test maintain functionality changes
+4. `./dev.sh install` - Switch to production install when done (removes symlink first)
+
+**Note:** `./dev.sh install` properly handles existing symlinks by removing them before copying, making transitions between development and production modes seamless.
 
 ## Architecture
 

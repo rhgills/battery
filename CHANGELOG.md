@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [v1.3.5-rhgills-development] - 2025-11-03
+
+### Changed
+- **CLAUDE.md documentation updates**: Improved developer documentation for engineers
+  - Updated logs command examples to show new granular syntax (cli/gui/all subcommands)
+  - Added comprehensive "Development Workflow (dev.sh)" section
+  - Documents dev.sh commands, workflow steps, and symlink handling behavior
+  - Provides clear guidance for developers on using the development helper script
+
 ## [v1.3.4-rhgills-development] - 2025-11-03
 
 ### Fixed
