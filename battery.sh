@@ -137,6 +137,7 @@ Cmnd_Alias      LEDCONTROL = $binfolder/smc -k ACLC -w 04, $binfolder/smc -k ACL
 Cmnd_Alias      CHTE = $binfolder/smc -k CHTE -r, $binfolder/smc -k CHTE -w 00000000, $binfolder/smc -k CHTE -w 01000000
 Cmnd_Alias      CHIE = $binfolder/smc -k CHIE -r, $binfolder/smc -k CHIE -w 08, $binfolder/smc -k CHIE -w 00
 Cmnd_Alias      CH0J = $binfolder/smc -k CH0J -r, $binfolder/smc -k CH0J -w 01, $binfolder/smc -k CH0J -w 00
+Cmnd_Alias      SMCREAD = $binfolder/smc -k BCLM -r, $binfolder/smc -k ACEN -r, $binfolder/smc -k CHWA -r, $binfolder/smc -k BFCL -r, $binfolder/smc -k ACFP -r
 ALL ALL = NOPASSWD: BATTERYOFF
 ALL ALL = NOPASSWD: BATTERYON
 ALL ALL = NOPASSWD: DISCHARGEOFF
@@ -145,6 +146,7 @@ ALL ALL = NOPASSWD: LEDCONTROL
 ALL ALL = NOPASSWD: CHTE
 ALL ALL = NOPASSWD: CHIE
 ALL ALL = NOPASSWD: CH0J
+ALL ALL = NOPASSWD: SMCREAD
 "
 
 # Get parameters
@@ -224,9 +226,21 @@ function valid_voltage() {
 	return 1
 }
 
+function sudo_smc() {
+	local label="$1"
+	shift
+
+	# Only log if in debug mode or if command might fail
+	if [[ "${DEBUG:-}" == "1" ]] || [[ "$1" == "-w" ]]; then
+		log "🔐 sudo smc: $label"
+	fi
+
+	sudo smc "$@"
+}
+
 function smc_read_hex() {
 	key=$1
-	line=$(echo $(sudo smc -k $key -r))
+	line=$(echo $(sudo_smc "Read SMC key $key" -k $key -r))
 	if [[ $line =~ "no data" ]]; then
 		echo
 	else
@@ -237,7 +251,7 @@ function smc_read_hex() {
 function smc_write_hex() {
 	local key=$1
 	local hex_value=$2
-	if ! sudo smc -k "$key" -w "$hex_value" >/dev/null 2>&1; then
+	if ! sudo_smc "Write $hex_value to SMC key $key" -k "$key" -w "$hex_value" >/dev/null 2>&1; then
 		log "⚠️ Failed to write $hex_value to $key"
 		return 1
 	fi
@@ -247,11 +261,12 @@ function smc_write_hex() {
 ## #########################
 ## Detect supported SMC keys
 ## #########################
-[[ $(sudo smc -k CHTE -r) =~ "no data" ]] && smc_supports_tahoe=false || smc_supports_tahoe=true;
-[[ $(sudo smc -k CH0B -r) =~ "no data" ]] && smc_supports_legacy=false || smc_supports_legacy=true;
-[[ $(sudo smc -k CHIE -r) =~ "no data" ]] && smc_supports_adapter_chie=false || smc_supports_adapter_chie=true;
-[[ $(sudo smc -k CH0I -r) =~ "no data" ]] && smc_supports_adapter_ch0i=false || smc_supports_adapter_ch0i=true;
-[[ $(sudo smc -k CH0J -r) =~ "no data" || $(sudo smc -k CH0J -r) =~ "Error" ]] && smc_supports_adapter_ch0j=false || smc_supports_adapter_ch0j=true;
+[[ $(sudo_smc "Detect CHTE support" -k CHTE -r) =~ "no data" ]] && smc_supports_tahoe=false || smc_supports_tahoe=true;
+[[ $(sudo_smc "Detect CH0B support" -k CH0B -r) =~ "no data" ]] && smc_supports_legacy=false || smc_supports_legacy=true;
+[[ $(sudo_smc "Detect CHIE support" -k CHIE -r) =~ "no data" ]] && smc_supports_adapter_chie=false || smc_supports_adapter_chie=true;
+[[ $(sudo_smc "Detect CH0I support" -k CH0I -r) =~ "no data" ]] && smc_supports_adapter_ch0i=false || smc_supports_adapter_ch0i=true;
+ch0j_result=$(sudo_smc "Detect CH0J support" -k CH0J -r)
+[[ "$ch0j_result" =~ "no data" || "$ch0j_result" =~ "Error" ]] && smc_supports_adapter_ch0j=false || smc_supports_adapter_ch0j=true;
 
 function log_smc_capabilities() {
 	log "SMC capabilities: tahoe=$smc_supports_tahoe legacy=$smc_supports_legacy CHIE=$smc_supports_adapter_chie CH0I=$smc_supports_adapter_ch0i CH0J=$smc_supports_adapter_ch0j"
@@ -269,7 +284,7 @@ function change_magsafe_led_color() {
 
 	# Check whether user can run color changes without password (required for backwards compatibility)
 	if sudo -n smc -k ACLC -r &>/dev/null; then
-		log "💡 Setting magsafe color to $color"
+		log "💡 Setting magsafe LED to $color"
 	else
 		log "🚨 Your version of battery is using an old visudo file, please run 'battery visudo' to fix this, until you do battery cannot change magsafe led colors"
 		return
@@ -302,7 +317,7 @@ function enable_discharging() {
 	else
 		smc_write_hex CH0I 01
 	fi
-	sudo smc -k ACLC -w 01
+	smc_write_hex ACLC 01
 
 	sleep 1
 }
@@ -326,11 +341,9 @@ function disable_discharging() {
 
 	if ! valid_percentage "$setting"; then
 
-		log "Disabling discharging: No valid maintain percentage set, enabling charging"
-
-		# use direct commands since enable_charging also calls disable_discharging, and causes an eternal loop
+		# When called without a maintain context (e.g., during daemon stop or from enable_charging),
+		# just ensure charging is enabled without logging a potentially confusing message
 		_enable_charging_internal
-
 		change_magsafe_led_color "orange"
 
 	elif [[ "$battery_percentage" -ge "$setting" && "$is_charging" == "enabled" ]]; then
