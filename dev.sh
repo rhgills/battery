@@ -23,6 +23,16 @@ case "$1" in
             fi
         fi
 
+        # Remove existing file or symlink before installing
+        if [[ -e "$INSTALL_PATH" ]] || [[ -L "$INSTALL_PATH" ]]; then
+            if [[ -L "$INSTALL_PATH" ]]; then
+                echo "Removing existing symlink..."
+            else
+                echo "Replacing existing installation..."
+            fi
+            sudo rm -f "$INSTALL_PATH"
+        fi
+
         sudo cp "$BATTERY_SCRIPT" "$INSTALL_PATH"
         sudo chmod +x "$INSTALL_PATH"
         echo "✅ Installed successfully"
