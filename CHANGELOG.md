@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [v1.3.6-rhgills-development] - 2025-11-03
+
+### Added
+- **Repository branching strategy documentation**: Comprehensive documentation of fork's branch structure
+  - Added "Repository Structure" section to CLAUDE.md explaining branch purposes and workflows
+  - Documents `main` (upstream tracking), feature branch (active development), and `rhgills-stable` (daily-driver)
+  - Provides clear guidance on when to update stable branch
+  - Added "Repository Branches" section to docs/README.md with overview
+  - Helps developers understand fork maintenance strategy and contribution workflow
+
 ## [v1.3.5-rhgills-development] - 2025-11-03
 
 ### Changed

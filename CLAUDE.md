@@ -57,6 +57,62 @@ The `dev.sh` helper script streamlines development and testing:
 
 **Note:** `./dev.sh install` properly handles existing symlinks by removing them before copying, making transitions between development and production modes seamless.
 
+## Repository Structure
+
+This fork maintains a specific branching strategy to balance daily use, development, and potential upstream contributions:
+
+### Branch Overview
+
+**`main`** - Upstream tracking branch
+- Mirrors the upstream battery repository
+- Used as sync point for pulling upstream changes
+- Keep this clean for easy rebasing and contributing back
+- Don't commit directly to this branch
+
+**`fix/charging-and-discharging-macos-tahoe`** - Active development branch
+- Current development work on macOS Tahoe compatibility and improvements
+- Contains latest features and fixes
+- May have work-in-progress commits
+- Used for experimentation and iteration
+
+**`rhgills-stable`** - Stable daily-driver branch
+- Snapshot of feature branch at stable milestones
+- Recommended for daily use
+- Updated when feature branch reaches tested, stable state
+- Tracks version: v1.3.x-rhgills-development (version indicates fork origin)
+
+### Development Workflow with Branches
+
+**For daily use:**
+- Use `rhgills-stable` branch
+- Pull updates when feature branch is marked stable
+
+**For development:**
+1. Work on `fix/charging-and-discharging-macos-tahoe` (or create new feature branches)
+2. Test thoroughly using `./dev.sh` workflow
+3. When stable, merge or fast-forward `rhgills-stable` to current state
+4. Continue iterating on feature branch
+
+**For syncing with upstream:**
+1. `git checkout main`
+2. `git fetch upstream && git merge upstream/main`
+3. `git checkout fix/charging-and-discharging-macos-tahoe`
+4. `git rebase main` (or merge, depending on preference)
+
+**For contributing back:**
+- Feature branch maintains clean history for potential PRs
+- Can cherry-pick specific commits if needed
+- Main branch stays aligned with upstream for easy PR creation
+
+### When to Update rhgills-stable
+
+Update `rhgills-stable` when:
+- Feature branch has reached a tested milestone
+- All changes have been documented in CHANGELOG.md
+- Version has been bumped appropriately
+- Features are working in daily use without known issues
+- Session summary has been written (if applicable)
+
 ## Architecture
 
 ### Battery Control Flow

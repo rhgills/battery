@@ -50,6 +50,18 @@ Development session summaries document significant work sessions, including:
   - How to contribute to the project
   - Code standards and expectations
 
+## Repository Branches
+
+This fork maintains three main branches:
+
+- **`main`** - Tracks upstream battery repository (don't commit here)
+- **`fix/charging-and-discharging-macos-tahoe`** - Active development branch
+- **`rhgills-stable`** - Stable snapshot for daily use
+
+**For daily use:** Check out `rhgills-stable` branch
+**For development:** Work on the feature branch or create new branches from it
+**For details:** See the "Repository Structure" section in [CLAUDE.md](../CLAUDE.md)
+
 ## For Developers
 
 If you're working on the Battery CLI:
